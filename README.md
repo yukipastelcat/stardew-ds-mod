@@ -65,11 +65,25 @@ What it does once running:
     way the vanilla inventory menu draws its own portrait box
     (`PortraitRenderer.cs`). Re-rendered roughly twice a second so it
     picks up a wardrobe/haircut change without re-rendering every tick.
-  - `GET /icon?name=backpack|map|crafting|organize` — PNG of one of the
-    app's bottom-nav icons or the backpack screen's organize button,
-    cropped from the game's own UI spritesheet (`UiIconCache.cs`) — same
-    icons the vanilla game menu uses (`organize` is the exact icon
-    `InventoryPage`'s own organizeButton uses).
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium`
+    — PNG of one of the app's bottom-nav icons, the backpack screen's
+    organize button, or an item-quality star badge, cropped from the
+    game's own UI spritesheet (`UiIconCache.cs`) — same icons the
+    vanilla game itself uses (`organize` is the exact icon
+    `InventoryPage`'s own organizeButton uses; the three `quality-*`
+    icons are the same silver/gold/iridium star crops `Object.drawInMenu`
+    draws over a quality item's own icon).
+  - `GET /state`'s (and `/ws`'s) inventory entries now also report
+    `quality` (0=normal, 1=silver, 2=gold, 4=iridium — only ever
+    non-zero for `StardewValley.Object` items, matching what vanilla
+    itself puts a star on) and `cooldownFraction` (0-1, present only for
+    a stabbing/defense sword currently recovering from a block — mirrors
+    the red cooldown-wipe `MeleeWeapon.drawInMenu` draws over its own
+    icon; see `GameStateSnapshot.DefenseCooldownWindowMs`'s doc comment).
+    Neither rides its own route: `quality` is plain JSON on the existing
+    inventory list, and so is `cooldownFraction` — the real vanilla
+    effect is a flat color overlay, not a sprite, so there's nothing to
+    crop for it.
   - `GET /season-icon?n=<0-3>` and `GET /weather-icon?n=<code>` — PNGs of
     the real season/weather icons the vanilla clock HUD itself draws
     (`SeasonWeatherIconCache.cs`), keyed by `GameStateSnapshot`'s
@@ -213,6 +227,17 @@ likely each is to have shifted:
    `CurrentToolIndex`, `MaxItems`, `dayOfMonth`, `timeOfDay`, the
    `isRaining`/`isSnowing`/`isLightning`/`isDebrisWeather` flags) has been
    stable across versions and is used the same way in most published mods.
+7. `GameStateSnapshot.cs`'s new `Quality`/`CooldownFraction` fields —
+   `item is StardewValley.Object obj ? obj.Quality : 0` and
+   `MeleeWeapon.stabbingSword`/`defenseSword`/`defenseCooldown` were all
+   read from decompiled 1.6-era source, not guessed, but (like everything
+   past the first round) unverified against a real build. If `dotnet
+   build` complains here, `MeleeWeapon.defenseCooldown`'s accessibility
+   (it's a `public static int` in the decompile checked) is the most
+   likely thing to have changed — that field being `static` rather than
+   per-weapon-instance is real vanilla behavior confirmed from source,
+   not an assumption made here, so don't "fix" it into an instance field
+   without re-checking against source first.
 
 `player.totalMoneyEarned` (a `uint` proxying the co-op team's shared
 lifetime earnings) is now read into the snapshot's `TotalEarnings` field

@@ -25,6 +25,16 @@ namespace StardewDS
     /// drawHUD draws) — these two per-widget patches replace that, so the
     /// bars can stay visible while the toolbar and clock stay hidden.
     /// </summary>
+    /// <remarks>
+    /// 2026-08-27: these prefixes install without error (Harmony finds
+    /// the named overload fine) but screenshot evidence showed the
+    /// toolbar/clock still drawing in-game on SV 1.6.15 — this game
+    /// version doesn't call these draw(SpriteBatch) overloads on this
+    /// path. Left in place as a cheap first line of defense, but the
+    /// actual fix is ModEntry.OnUpdateTicked's
+    /// Game1.onScreenMenus.RemoveAll(...) call, which works regardless
+    /// of which draw() overload the game actually uses.
+    /// </remarks>
     internal static class HudPatches
     {
         [HarmonyPrefix]

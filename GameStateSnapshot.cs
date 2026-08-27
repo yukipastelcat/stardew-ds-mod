@@ -56,6 +56,23 @@ namespace StardewDS
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
         /// <summary>
+        /// Length, in milliseconds, of a stabbing/defense sword's "on
+        /// cooldown after blocking" window — verified against the
+        /// decompiled <see cref="MeleeWeapon"/>: <c>animateSpecialMove</c>
+        /// sets the static <c>defenseCooldown</c> field to exactly 1500
+        /// when a defense sword (type 3) blocks, and
+        /// <c>drawInMenu</c>'s own red cooldown-wipe overlay divides that
+        /// same field by 1500 to get its 0-1 fill fraction — this mirrors
+        /// that fraction for the app instead of a cropped sprite, since
+        /// the real effect is a plain color overlay
+        /// (<c>Color.Red * 0.66f</c> over <c>Game1.staminaRect</c>, a 1x1
+        /// tinted pixel), not game art. Also applies to stabbing swords
+        /// (type 0) — <c>drawInMenu</c>'s switch handles both types
+        /// identically.
+        /// </summary>
+        private const int DefenseCooldownWindowMs = 1500;
+
+        /// <summary>
         /// Builds a snapshot from the current game state. Must be called
         /// from the main game thread (e.g. from an UpdateTicked handler) —
         /// Stardew Valley's game state is not thread-safe. Returns null if
@@ -121,6 +138,34 @@ namespace StardewDS
                     waterLeftMax = wateringCan.waterCanMax;
                 }
 
+                // Quality (rarity star) — verified against the
+                // decompiled Object class: `Quality` (silver=1, gold=2,
+                // iridium=4; 3 is unused) lives on StardewValley.Object
+                // specifically, not the base Item class, so anything
+                // that isn't an Object (tools, weapons, hats, rings,
+                // boots) has no quality concept here and reports 0 (no
+                // star) — same as vanilla's own inventory menu, which
+                // only ever draws this badge for Object-type items.
+                int quality = item is StardewValley.Object obj ? obj.Quality : 0;
+
+                // "Reloading" status — the real vanilla red cooldown-wipe
+                // overlay stabbing/defense swords draw over their own
+                // icon while blocked-and-recovering (see
+                // DefenseCooldownWindowMs's doc comment). MeleeWeapon's
+                // own `defenseCooldown` field is `static`, i.e. shared by
+                // every sword instance rather than tracked per-item —
+                // that's a real vanilla quirk, not a bug introduced
+                // here — so this reports the same fraction for every
+                // stabbing/defense sword slot, exactly matching what
+                // drawInMenu would show for each of them in-game.
+                double? cooldownFraction = null;
+                if (item is MeleeWeapon weapon
+                    && (weapon.type.Value == MeleeWeapon.stabbingSword || weapon.type.Value == MeleeWeapon.defenseSword)
+                    && MeleeWeapon.defenseCooldown > 0)
+                {
+                    cooldownFraction = System.Math.Clamp(MeleeWeapon.defenseCooldown / (double)DefenseCooldownWindowMs, 0.0, 1.0);
+                }
+
                 inventory.Add(new InventorySlotDto
                 {
                     Name = item.DisplayName,
@@ -129,6 +174,8 @@ namespace StardewDS
                     QualifiedItemId = item.QualifiedItemId,
                     WaterLeft = waterLeft,
                     WaterLeftMax = waterLeftMax,
+                    Quality = quality,
+                    CooldownFraction = cooldownFraction,
                 });
             }
 
@@ -202,6 +249,12 @@ namespace StardewDS
 
         /// <summary>Watering can capacity at its current upgrade level; null for anything else.</summary>
         public int? WaterLeftMax { get; init; }
+
+        /// <summary>Item quality: 0=normal (no star), 1=silver, 2=gold, 4=iridium. Only ever non-zero for <see cref="StardewValley.Object"/> items — see the doc comment where this is computed in <see cref="Capture"/>.</summary>
+        public int Quality { get; init; }
+
+        /// <summary>0-1 fraction of a stabbing/defense sword's real vanilla "reloading" cooldown-wipe overlay still remaining (1 = just blocked, 0/null = ready), or null if this item has no such cooldown. Rides the JSON snapshot directly as a plain number rather than a sprite endpoint — the real effect is a flat color overlay, not cropped game art (see <see cref="GameStateSnapshot.DefenseCooldownWindowMs"/>'s doc comment).</summary>
+        public double? CooldownFraction { get; init; }
     }
 
     internal sealed class EquipmentDto

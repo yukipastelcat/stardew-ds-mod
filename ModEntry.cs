@@ -53,37 +53,59 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick — keeps the OS mouse cursor visible while a save is loaded (the toolbar/clock are hidden via Harmony patches instead, see <see cref="HudPatches"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
             {
-                // The toolbar and clock/day/money box are hidden via
-                // Harmony patches on their own draw methods now (see
+                // The toolbar and clock/day/money box are meant to be
+                // hidden via Harmony patches on their own draw methods (see
                 // HudPatches.cs) instead of the blanket Game1.displayHUD
-                // flag this used to set to false every tick. That flag
-                // also happened to gate the health/energy (stamina) bars —
+                // flag this used to set to false every tick. That flag also
+                // happened to gate the health/energy (stamina) bars —
                 // confirmed against the decompiled Game1.drawHUD, which
-                // draws them inline right alongside the toolbar/clock
-                // (via onScreenMenus), with no way to hide just some of
-                // what that one method draws — so it was hiding those too,
-                // even though nothing in the app duplicates them. Leaving
+                // draws them inline right alongside the toolbar/clock (via
+                // onScreenMenus), with no way to hide just some of what
+                // that one method draws — so it was hiding those too, even
+                // though nothing in the app duplicates them. Leaving
                 // displayHUD at its default `true` lets them draw normally
                 // again.
+                //
+                // 2026-08-27: screenshot evidence showed the toolbar and
+                // clock still drawing in-game (SV 1.6.15) even though
+                // Harmony reported both prefix patches applied with zero
+                // errors — the exact draw(SpriteBatch) overload being
+                // patched isn't the code path this game version actually
+                // uses to render them. Rather than chase the right overload,
+                // the onScreenMenus-filtering loop below is the real
+                // fix: it can't draw what isn't in the list, regardless of
+                // which draw() would've been called.
 
-                // Setting the hardwareCursor option alone does NOT make
-                // the OS cursor visible, which is why it stayed invisible
-                // even after the previous fix attempt below. Confirmed
-                // against the decompiled Options.hardwareCursor property
-                // setter, which only stores the flag
-                // (`_hardwareCursor = value;`) — the actual
-                // `IsMouseVisible` toggle only happens inside
-                // Options.reApplySetOptions() (the same method the game's
-                // own options-menu checkbox calls right after flipping
-                // this setting). Re-applied every tick since other game
-                // code (e.g. toggling fullscreen) can flip both back off.
-                Game1.options.hardwareCursor = true;
-                Game1.options.reApplySetOptions();
+                // The mod deliberately does NOT touch
+                // Game1.options.hardwareCursor -- that is the player's own
+                // game setting (Options > Windows menu) and not this mod's
+                // business either way. Earlier rounds tried flipping it to
+                // true, then explicitly back to false, while troubleshooting
+                // a missing-cursor-during-gameplay bug; neither direction
+                // actually fixed that bug, and per feedback 2026-08-27 the
+                // mod should not be changing this setting at all. Whatever
+                // cursor issue remains is a separate, still-open question
+                // (see project memory hud_cursor_debug.md) -- not something
+                // to chase by toggling this option.
+
+                // Belt-and-suspenders HUD hiding -- see comment above this
+                // block and HudPatches.cs's own doc comment for why the
+                // Harmony draw() prefixes alone weren't enough.
+                // Game1.onScreenMenus is typed IList<IClickableMenu>, not
+                // List<IClickableMenu> -- no RemoveAll available, so this
+                // walks backwards and removes matches by index instead
+                // (safe against re-indexing while iterating, unlike a
+                // forward loop that RemoveAt's).
+                for (int i = Game1.onScreenMenus.Count - 1; i >= 0; i--)
+                {
+                    if (Game1.onScreenMenus[i] is Toolbar or DayTimeMoneyBox)
+                        Game1.onScreenMenus.RemoveAt(i);
+                }
 
                 this.ApplyPendingSelection();
                 this.ApplyPendingMove();
@@ -98,6 +120,7 @@ namespace StardewDS
         {
             this._server?.UpdateSnapshot(null);
         }
+
 
         /// <summary>Called from the companion server's background thread when the app requests an item be selected. Queues the request instead of applying it here — Stardew Valley's game state isn't safe to mutate off the main thread — for <see cref="OnUpdateTicked"/> to apply.</summary>
         private void OnSelectRequested(int index)

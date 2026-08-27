@@ -9,8 +9,9 @@ namespace StardewDS
 {
     /// <summary>
     /// Crops the small fixed set of UI icons the companion app uses —
-    /// the bottom nav's backpack/skills/map/crafting tab icons, plus the
-    /// backpack screen's organize button — straight out of the game's
+    /// the bottom nav's backpack/skills/map/crafting tab icons, the
+    /// backpack screen's organize button, and the three item-quality
+    /// star badges (silver/gold/iridium) — straight out of the game's
     /// own `Cursors` spritesheet (<see cref="Game1.mouseCursors"/>), the
     /// exact same icons the vanilla game itself draws.
     ///
@@ -40,11 +41,26 @@ namespace StardewDS
             // InventoryPage constructor before writing, same as every
             // other rect in this file).
             ["organize"] = new Rectangle(162, 440, 16, 16),
+
+            // Item quality star badges — the small icon vanilla's own
+            // Object.drawInMenu draws over an item's sprite for
+            // silver/gold/iridium quality. Verified against the
+            // decompiled Object class (same rects cited when a 1.5.4
+            // bug report about ColoredObject's outdated copy of this
+            // logic was fixed): silver/gold follow an 8px-per-step
+            // pattern starting at (338, 400); iridium (added after that
+            // pattern was established) doesn't fit it and lives at a
+            // separate (346, 392) instead. Quality 3 has no star (never
+            // used by the game); quality 0 (normal) draws no badge at
+            // all, so it has no entry here.
+            ["quality-silver"] = new Rectangle(338, 400, 8, 8),
+            ["quality-gold"] = new Rectangle(346, 400, 8, 8),
+            ["quality-iridium"] = new Rectangle(346, 392, 8, 8),
         };
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", or "crafting"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", or "quality-silver"/"quality-gold"/"quality-iridium"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 
