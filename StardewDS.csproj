@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RootNamespace>StardewDS</RootNamespace>
+    <AssemblyName>StardewDS</AssemblyName>
+    <Version>1.1.0</Version>
+    <EnableModDeploy>true</EnableModDeploy>
+    <EnableModZip>true</EnableModZip>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
+    <!-- Harmony patching, for suppressing the vanilla toolbar draw call (see HudPatches.cs). -->
+    <PackageReference Include="Lib.Harmony" Version="2.3.3" />
+  </ItemGroup>
+
+</Project>
