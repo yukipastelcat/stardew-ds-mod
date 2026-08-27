@@ -12,6 +12,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- ci-tools/ is a standalone tool (mod/ci-tools/refstrip) for regenerating
+         the CI secrets in mod/README.md#ci-builds - not part of this mod, but
+         nested under mod/ for organization. Exclude it from the default **/*.cs
+         glob so its top-level-statement Program.cs doesn't get compiled into
+         this class library alongside the mod's own code. -->
+    <Compile Remove="ci-tools/**/*.cs" />
+    <None Remove="ci-tools/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
     <!-- Harmony patching, for suppressing the vanilla toolbar draw call (see HudPatches.cs). -->
     <PackageReference Include="Lib.Harmony" Version="2.3.3" />
