@@ -53,26 +53,37 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick — hides the vanilla HUD while a save is loaded, applies any pending item-selection request from the app, and republishes the current state snapshot for the companion server to serve.</summary>
+        /// <summary>Raised once per game tick — keeps the OS mouse cursor visible while a save is loaded (the toolbar/clock are hidden via Harmony patches instead, see <see cref="HudPatches"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
             {
-                // Hides the hotbar, clock, and health/energy meters — the
-                // companion app is the source of truth for these now. This
-                // suppresses the game's FULL vanilla HUD (buffs and event
-                // icons too), since Stardew doesn't expose a way to hide
-                // just those three; re-asserted every tick because some
-                // game code (e.g. closing a menu) resets the flag.
-                Game1.displayHUD = false;
+                // The toolbar and clock/day/money box are hidden via
+                // Harmony patches on their own draw methods now (see
+                // HudPatches.cs) instead of the blanket Game1.displayHUD
+                // flag this used to set to false every tick. That flag
+                // also happened to gate the health/energy (stamina) bars —
+                // confirmed against the decompiled Game1.drawHUD, which
+                // draws them inline right alongside the toolbar/clock
+                // (via onScreenMenus), with no way to hide just some of
+                // what that one method draws — so it was hiding those too,
+                // even though nothing in the app duplicates them. Leaving
+                // displayHUD at its default `true` lets them draw normally
+                // again.
 
-                // The game normally draws its own cursor sprite as part of
-                // that same HUD pass, so hiding the HUD was also making the
-                // mouse cursor disappear during gameplay (confirmed by the
-                // user). Forcing the OS/hardware cursor decouples cursor
-                // rendering from displayHUD entirely — this is the same
-                // "Hardware Cursor" toggle in the game's own options menu.
+                // Setting the hardwareCursor option alone does NOT make
+                // the OS cursor visible, which is why it stayed invisible
+                // even after the previous fix attempt below. Confirmed
+                // against the decompiled Options.hardwareCursor property
+                // setter, which only stores the flag
+                // (`_hardwareCursor = value;`) — the actual
+                // `IsMouseVisible` toggle only happens inside
+                // Options.reApplySetOptions() (the same method the game's
+                // own options-menu checkbox calls right after flipping
+                // this setting). Re-applied every tick since other game
+                // code (e.g. toggling fullscreen) can flip both back off.
                 Game1.options.hardwareCursor = true;
+                Game1.options.reApplySetOptions();
 
                 this.ApplyPendingSelection();
                 this.ApplyPendingMove();

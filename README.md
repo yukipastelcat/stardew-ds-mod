@@ -1,10 +1,11 @@
 # stardew-ds-mod
 
-SMAPI mod for **StardewDS** — hides the vanilla hotbar, clock, and
-health/energy HUD, and exposes the player's inventory and stats to the
-[`companion-app`](../companion-app) Flutter app over a small local HTTP
-server, so the phone app becomes the source of truth for those instead of
-the game drawing its own copy on screen.
+SMAPI mod for **StardewDS** — hides the vanilla hotbar and clock/day/money
+box (the phone app becomes the source of truth for those instead of the
+game drawing its own copy on screen), and exposes the player's inventory
+and stats to the [`companion-app`](../companion-app) Flutter app over a
+small local HTTP server. The health and energy (stamina) bars stay visible
+in-game — the app doesn't duplicate those.
 
 ## Status
 
@@ -15,14 +16,27 @@ attempted. The first real test is on your machine; see "Known risk areas"
 below for exactly what to check if the build fails.
 
 What it does once running:
-- Sets `Game1.displayHUD = false` every tick while a save is loaded, which
-  hides the toolbar, clock, and health/energy bars (this hides the game's
-  *entire* vanilla HUD — buffs and event/quest icons too — since Stardew
-  doesn't expose a way to hide just those three; there was no version of
-  this that was both selective and something I could verify without
-  compiling it).
-- Also Harmony-patches `Toolbar.draw` to skip drawing it, redundant with
-  the above but kept as a fallback.
+- Harmony-patches `Toolbar.draw` and `DayTimeMoneyBox.draw` (both
+  `StardewValley.Menus`) to skip drawing entirely — this hides just the
+  hotbar and the clock/day/money/season/weather box, nothing else. An
+  earlier version of this mod set `Game1.displayHUD = false` every tick
+  instead, which was coarser than intended: that flag also gates the
+  health/energy (stamina) bars (drawn inline inside `Game1.drawHUD`,
+  right alongside the toolbar/clock, via the same `onScreenMenus` loop —
+  confirmed against the decompiled source — so there was no way to hide
+  only some of what it draws), so it was hiding those too even though the
+  app doesn't duplicate them; switched to per-widget Harmony patches so
+  the health/energy bars can stay visible while the toolbar/clock stay
+  hidden.
+- Forces `Game1.options.hardwareCursor = true` and calls
+  `Game1.options.reApplySetOptions()` every tick, so the OS mouse cursor
+  stays visible during gameplay. Confirmed against the decompiled
+  `Options.hardwareCursor` setter that setting the flag alone does
+  *nothing* visible — the actual `IsMouseVisible` toggle only happens
+  inside `reApplySetOptions()` (the same method the game's own options
+  menu calls after you check "Hardware Cursor"), which is why an earlier
+  version of this fix (setting the option without calling that method)
+  didn't actually make the cursor appear.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -181,10 +195,13 @@ likely each is to have shifted:
    usage off the game's normal draw path is the part most likely to need
    an adjustment if `dotnet build` or the runtime output looks wrong
    (e.g. a garbled or blank portrait PNG rather than a compile error).
-4. `HudPatches.cs` — the `Toolbar.draw(SpriteBatch)` signature Harmony
-   targets; if the method's been renamed/moved this patch just won't
-   apply (SMAPI logs a warning, doesn't crash) and you fall back to
-   `displayHUD = false` alone, which still hides the toolbar.
+4. `HudPatches.cs` — the `Toolbar.draw(SpriteBatch)` and
+   `DayTimeMoneyBox.draw(SpriteBatch)` signatures Harmony targets; if
+   either method's been renamed/moved that one patch just won't apply
+   (SMAPI logs a warning, doesn't crash) and that one widget (toolbar or
+   clock box) reappears — there's no `displayHUD = false` fallback
+   anymore, since that also hid the health/energy bars, which this mod no
+   longer wants to hide.
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
    against the real decompiled source (`InventoryPage.draw` for the
