@@ -247,23 +247,38 @@ against the actual game/SMAPI DLLs (`Stardew Valley.dll`,
 `StardewValley.GameData.dll`, `MonoGame.Framework.dll`, `xTile.dll`,
 `StardewModdingAPI.dll`, `smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll`).
 Those are commercial/copyrighted files, so GitHub's hosted runners don't
-have them — they have to be supplied via a repo secret.
+have them — they have to be supplied some other way, and since this repo
+is **public**, that rules out anything publicly downloadable (a Release
+asset, a committed file, etc). The only thing that stays private on a
+public repo is a GitHub Actions secret — but secrets are capped at 48KB
+each with 100 secrets per repo (~4.9MB total), and the six DLLs above
+gzip+base64 to ~5.2MB, just over that ceiling.
 
-**One-time setup**, from a machine with the game + SMAPI installed:
+The fix: `mod/ci-tools/refstrip` strips every method body out of the DLLs
+(replacing each with a 3-byte `ldnull; throw` stub) before packing them.
+The mod build only needs the DLLs' public type/method *signatures* to
+compile against — never the actual game logic — so this is safe and
+doesn't touch any metadata the compiler relies on (types, members,
+attributes, default parameter values, generic constraints, etc). It
+shrinks the gzipped payload from ~3.9MB to ~2.4MB (~3.3MB base64'd),
+which splits into 82 chunks comfortably under the 100-secret cap, with
+room for the DLLs to grow before this needs revisiting.
+
+**One-time setup** (and again whenever the game/SMAPI version changes),
+from a machine with the game + SMAPI installed, the .NET SDK (any recent
+version — the tool only needs `System.Reflection.Metadata`, no NuGet
+packages), and the GitHub CLI (`gh`, authenticated with a token that can
+manage repo secrets):
 
 ```bash
-cd "<your Stardew Valley install>"   # the folder containing "Stardew Valley.dll"
-tar czf /tmp/stardew-game-assemblies.tar.gz \
-  "Stardew Valley.dll" StardewValley.GameData.dll MonoGame.Framework.dll xTile.dll \
-  StardewModdingAPI.dll smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll
-base64 -i /tmp/stardew-game-assemblies.tar.gz | tr -d '\n' > /tmp/stardew-game-assemblies.b64
-gh secret set STARDEW_GAME_ASSEMBLIES_B64 --repo <you>/stardew-ds < /tmp/stardew-game-assemblies.b64
+mod/ci-tools/generate-ci-secrets.sh "<your Stardew Valley install>" <you>/stardew-ds
 ```
 
-(`-i` is the macOS `base64` flag; on Linux drop it and use
-`base64 -w0 /tmp/stardew-game-assemblies.tar.gz > /tmp/stardew-game-assemblies.b64`
-instead.) Re-run this only when the game/SMAPI version — and therefore
-these DLLs — changes.
+That builds `refstrip`, strips the six DLLs, packs and chunks them, and
+uploads the resulting `STARDEW_REFASM_B64_000`..`_081` secrets via `gh`. If
+the chunk count it prints differs from 82, update the printf list in
+`.github/workflows/release-build.yml`'s "Reconstruct game reference
+assemblies" step to match — see the comment on that step.
 
 If the `mod` and `companion` repos are private, `actions/checkout` also
 needs a token with read access to fetch them as submodules: set a repo
