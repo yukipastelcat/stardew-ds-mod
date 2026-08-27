@@ -128,7 +128,7 @@ folder containing the game executable):
 # the top-level Steam folder, at .../Contents/MacOS/ — pointing GAME at
 # the top-level folder fails with "doesn't contain the Stardew Valley
 # file" (confirmed by actually trying it).
-GAME="/Users/yukipastelcat/Library/Application Support/Steam/steamapps/common/Stardew Valley/Contents/MacOS"
+GAME="/Users/YOUR_USERNAME/Library/Application Support/Steam/steamapps/common/Stardew Valley/Contents/MacOS"
 docker run --rm -v "$PWD:/src" -v "$GAME:/game" -w /src mcr.microsoft.com/dotnet/sdk:6.0 dotnet build -p:GamePath=/game
 ```
 
