@@ -53,6 +53,14 @@ What it does once running:
   - `POST /organize` — no body; runs the game's own organize-button
     logic (`ItemGrabMenu.organizeItemsInList`) on the player's backpack —
     the app's organize button.
+  - `POST /open-journal` — no body; opens the real vanilla `QuestLog`
+    menu in-game, the same menu class the journal key (or the in-game
+    quest-log button) opens — the app's new Journal button (see
+    `companion/lib/widgets/backpack_toolbar.dart`). Guarded the same way
+    the real quest-log button's own click handler is (player able to
+    move, no dialogue/event/farm-event in progress), and also skipped
+    if some other menu is already open, so a remote tap mid-cutscene
+    doesn't force one open.
   - `GET /sprite?id=<qualifiedItemId>` — PNG of that item's real in-game
     icon, cropped straight out of the player's own loaded game textures
     (`SpriteCache.cs`) — not anything the app bundles or downloads itself.
@@ -65,14 +73,31 @@ What it does once running:
     way the vanilla inventory menu draws its own portrait box
     (`PortraitRenderer.cs`). Re-rendered roughly twice a second so it
     picks up a wardrobe/haircut change without re-rendering every tick.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium`
+  - `GET /mini-portrait` — PNG of the real vanilla head+hair-only icon
+    (no shirt/pants/hat/accessories) — the exact
+    `FarmerRenderer.drawMiniPortrat` call the GameMenu's Skills tab and
+    the MapPage's own player marker both use in real vanilla
+    (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
+    render than `/portrait` — reuse `/portrait` for anything that wants
+    the full standing body. Same refresh cadence as `/portrait`.
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|watering-can-gauge`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
-    organize button, or an item-quality star badge, cropped from the
-    game's own UI spritesheet (`UiIconCache.cs`) — same icons the
-    vanilla game itself uses (`organize` is the exact icon
-    `InventoryPage`'s own organizeButton uses; the three `quality-*`
-    icons are the same silver/gold/iridium star crops `Object.drawInMenu`
-    draws over a quality item's own icon).
+    organize/journal buttons, an item-quality star badge, a Skills
+    screen skill icon or level-pip segment, the journal button's
+    "new activity" pulse badge, or the watering can's water-gauge
+    frame, cropped from the game's own UI spritesheet (`UiIconCache.cs`)
+    — same icons the vanilla game itself uses (`organize` is the exact
+    icon `InventoryPage`'s own organizeButton uses; the three
+    `quality-*` icons are the same silver/gold/iridium star crops
+    `Object.drawInMenu` draws over a quality item's own icon;
+    `skill-*`/`pip-*` are the exact icons/pip segments `SkillsPage.draw`
+    uses; `journal`/`journal-pulse` are `DayTimeMoneyBox`'s own
+    quest-log button icon and its pulse badge; `watering-can-gauge` is
+    the exact background crop `WateringCan.drawInMenu` draws behind its
+    water-level fill — the fill itself is a plain solid-color rect, not
+    a sprite, so it rides the snapshot as `waterLeft`/`waterLeftMax`/
+    `waterCanIsBottomless` instead, same pattern as `cooldownFraction`
+    below).
   - `GET /state`'s (and `/ws`'s) inventory entries now also report
     `quality` (0=normal, 1=silver, 2=gold, 4=iridium — only ever
     non-zero for `StardewValley.Object` items, matching what vanilla
@@ -83,7 +108,21 @@ What it does once running:
     Neither rides its own route: `quality` is plain JSON on the existing
     inventory list, and so is `cooldownFraction` — the real vanilla
     effect is a flat color overlay, not a sprite, so there's nothing to
-    crop for it.
+    crop for it. Inventory entries for a Watering Can also report
+    `waterCanIsBottomless` (bool) alongside the existing `waterLeft`/
+    `waterLeftMax` — it picks the water-gauge fill's color (BlueViolet
+    full-opacity vs. DodgerBlue 70%-opacity), mirroring
+    `WateringCan.drawInMenu`'s own color choice.
+  - `GET /state`'s (and `/ws`'s) snapshot also reports `title` (Farmer.getTitle(),
+    shown under the player's name on the Skills screen), `farmingLevel`/
+    `miningLevel`/`foragingLevel`/`fishingLevel`/`combatLevel` (the five
+    skill levels the Skills screen draws a pip row for — luck is
+    deliberately not reported here, since vanilla hides that row until
+    the Special Charm is found and the app's Skills screen doesn't draw
+    it either), and `hasVisibleQuests`/`hasNewQuestActivity` (mirroring
+    `Farmer.hasVisibleQuests`/`hasNewQuestActivity()` — the latter drives
+    the Journal button's pulsing badge, same trigger as the real
+    in-game quest-log button's own pulse).
   - `GET /season-icon?n=<0-3>` and `GET /weather-icon?n=<code>` — PNGs of
     the real season/weather icons the vanilla clock HUD itself draws
     (`SeasonWeatherIconCache.cs`), keyed by `GameStateSnapshot`'s
@@ -127,6 +166,30 @@ What it does once running:
     `tint * 0.5f` draw call; the selected frame replaces the normal
     frame outright for the selected slot, matching how the real hotbar
     swaps tile 56 in for tile 10 rather than layering it on top.
+  - `GET /world-map` — PNG of the real vanilla world map background:
+    the exact `Rectangle(0, 0, 300, 180)` region `StardewValley.Menus
+    .MapPage.draw` itself draws from `Game1.content.Load<Texture2D>
+    ("LooseSprites\\map")` (via `WorldMapCache.cs`). **Corrected after a
+    real screenshot showed the bug**: an earlier version of this cache
+    served the *entire* `LooseSprites\\map` texture, which turned out to
+    be a much bigger spritesheet packing in every `Data/WorldMap` map
+    area (alternate farm layouts, the quarry, Ginger Island, the volcano
+    dungeon, etc.) below the base view — the app was rendering all of it
+    stitched into one tall, garbled image. Cropping to the same
+    `Rectangle` vanilla itself draws fixed it. Still not the per-farm-type
+    overlay `MapPage` layers on top of that same region for the six farm
+    layouts — those composite over this rect rather than living
+    elsewhere on the sheet, so the base map alone still reads correctly
+    without them. `/state` and `/ws`'s snapshots also report `locationName`
+    (e.g. "Farm", "Town", "The Mines") and `mapMarkerX`/`mapMarkerY` — the
+    player's position as a 0-1 fraction of this image's own width/height,
+    computed via the real `StardewValley.WorldMaps.WorldMapManager` API
+    (the actual 1.6 world-map-placement system, replacing the old
+    hardcoded per-region math) so it lines up exactly like opening the
+    real in-game map would. `mapMarkerX`/`Y` are `null` whenever the
+    current location isn't mapped in `Data/WorldMap` (most mine/cave
+    levels, a handful of interiors) — same as the real map page, which
+    shows no marker there either.
 - Snapshotting and applying selection requests both happen on the main
   game thread (`GameLoop.UpdateTicked`) — the HTTP listener runs on a
   background thread and only ever reads a cached snapshot / queues
@@ -238,6 +301,32 @@ likely each is to have shifted:
    per-weapon-instance is real vanilla behavior confirmed from source,
    not an assumption made here, so don't "fix" it into an instance field
    without re-checking against source first.
+8. `WorldMapCache.cs` / `GameStateSnapshot.cs`'s new `LocationName`/
+   `MapMarkerX`/`MapMarkerY` fields — `Game1.content.Load<Texture2D>
+   ("LooseSprites\\map")` (the world map texture path) and
+   `StardewValley.WorldMaps.WorldMapManager.GetPositionData(GameLocation,
+   Point)` (the 1.6 world-map-placement API) were both confirmed against
+   the official modding wiki's Data/WorldMap documentation before
+   writing, not guessed, but the wiki's own paraphrased example turned
+   out to elide two real API details a `dotnet build` caught: the tile
+   argument is a `Point`, not the `Vector2` `player.Tile` itself is
+   (CS1503), and `GetPositionData` actually returns a
+   `MapAreaPositionWithContext?` wrapper, not `MapAreaPosition?` directly
+   — unwrap it via `.Data` (CS0029; same real SV 1.6.14 API-shape bug
+   filed as stardew-valley-dedicated-server/server#13 and fixed the same
+   way in Annosz/UIInfoSuite2#635, found via web search once the compiler
+   flagged it). Both build errors are fixed. A third, non-compile bug
+   was then caught by a real screenshot: `WorldMapCache.cs` was serving
+   the *entire* `LooseSprites\\map` texture rather than cropping the
+   `Rectangle(0, 0, 300, 180)` region `MapPage.draw` actually draws for
+   the base overworld — the full texture is a much bigger sheet packing
+   in every `Data/WorldMap` map area, and it was all rendering stitched
+   into one garbled image. Fixed by cropping to that exact `Rectangle`
+   (the same one an earlier, pre-1.6 decompile of `MapPage.draw` had
+   already told this project about — see `WorldMapCache.cs`'s doc
+   comment). `GameLocation.GetDisplayName()` (used for `LocationName`)
+   is the only piece of this round's work still not confirmed by a real
+   build/screenshot.
 
 `player.totalMoneyEarned` (a `uint` proxying the co-op team's shared
 lifetime earnings) is now read into the snapshot's `TotalEarnings` field
@@ -252,10 +341,12 @@ row when absent) in case this needs reverting on an older save format.
 - `GameStateSnapshot.cs` — builds the JSON payload from live game state
 - `SpriteCache.cs` — crops real item icons via `ItemRegistry`/`ParsedItemData`
 - `PortraitRenderer.cs` — renders the composited farmer portrait off-screen
+- `MiniPortraitRenderer.cs` — renders the real vanilla head+hair-only mini portrait off-screen
 - `UiIconCache.cs` — crops the bottom-nav tab icons from the game's UI sheet
 - `SeasonWeatherIconCache.cs` — crops the clock HUD's season/weather icons
 - `PortraitBackgroundCache.cs` — crops the day/night portrait backdrop
 - `WindowBorderCache.cs` — crops the 9-slice menu window-border texture
+- `WorldMapCache.cs` — serves the real vanilla world map background texture
 - `ClockCache.cs` — crops the clock/day box backdrop and its sundial needle
 - `HudPatches.cs` — Harmony patch that skips drawing the toolbar
 - `manifest.json` — SMAPI mod manifest

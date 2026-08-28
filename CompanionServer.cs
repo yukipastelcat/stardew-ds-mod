@@ -41,6 +41,7 @@ namespace StardewDS
         private readonly Action<int> _onSelectRequested;
         private readonly Action<int, int> _onMoveRequested;
         private readonly Action _onOrganizeRequested;
+        private readonly Action _onOpenJournalRequested;
 
         private HttpListener? _listener;
         private Thread? _thread;
@@ -56,13 +57,14 @@ namespace StardewDS
         private readonly object _socketsLock = new();
         private string? _lastBroadcastJson;
 
-        public CompanionServer(IMonitor monitor, int port, Action<int> onSelectRequested, Action<int, int> onMoveRequested, Action onOrganizeRequested)
+        public CompanionServer(IMonitor monitor, int port, Action<int> onSelectRequested, Action<int, int> onMoveRequested, Action onOrganizeRequested, Action onOpenJournalRequested)
         {
             this._monitor = monitor;
             this._port = port;
             this._onSelectRequested = onSelectRequested;
             this._onMoveRequested = onMoveRequested;
             this._onOrganizeRequested = onOrganizeRequested;
+            this._onOpenJournalRequested = onOpenJournalRequested;
         }
 
         /// <summary>Called from the main game thread each tick to publish the latest state. Pass null when no save is loaded. Cheap no-op for connected WebSocket clients when nothing actually changed since the last call — only a real difference triggers a push, so this can safely be called every tick instead of needing its own throttle.</summary>
@@ -332,6 +334,16 @@ namespace StardewDS
                 this._onOrganizeRequested();
                 WriteJson(response, "{\"ok\":true}");
             }
+            else if (request.HttpMethod == "POST" && path == "/open-journal")
+            {
+                // The app's new Journal button — no body needed. Applied
+                // on the main thread by ModEntry.ApplyPendingOpenJournal,
+                // same queue-and-apply pattern as /organize; opens the
+                // real vanilla QuestLog menu, same as pressing the
+                // journal key (or the in-game quest-log button) would.
+                this._onOpenJournalRequested();
+                WriteJson(response, "{\"ok\":true}");
+            }
             else if (request.HttpMethod == "GET" && path == "/sprite")
             {
                 // Real item icons, cropped from the player's own loaded
@@ -374,6 +386,27 @@ namespace StardewDS
                 {
                     response.StatusCode = 404;
                     WriteJson(response, "{\"error\":\"portrait not rendered yet\"}");
+                }
+                else
+                {
+                    response.ContentType = "image/png";
+                    response.ContentLength64 = png.Length;
+                    response.OutputStream.Write(png, 0, png.Length);
+                    response.OutputStream.Close();
+                }
+            }
+            else if (request.HttpMethod == "GET" && path == "/mini-portrait")
+            {
+                // The real vanilla head+hair-only icon (no shirt/pants/
+                // hat) — the exact FarmerRenderer.drawMiniPortrat call
+                // GameMenu's Skills tab and MapPage's own player marker
+                // both use — see MiniPortraitRenderer.cs.
+                byte[]? png = MiniPortraitRenderer.TryGet();
+
+                if (png is null)
+                {
+                    response.StatusCode = 404;
+                    WriteJson(response, "{\"error\":\"mini portrait not rendered yet\"}");
                 }
                 else
                 {
@@ -513,6 +546,28 @@ namespace StardewDS
                 // vanilla menu) for a backpack slot beyond the player's
                 // current capacity — see InventorySlotIconCache.cs.
                 byte[]? png = InventorySlotIconCache.TryGetLockedOverlay();
+
+                if (png is null)
+                {
+                    response.StatusCode = 404;
+                    WriteJson(response, "{\"error\":\"not rendered yet\"}");
+                }
+                else
+                {
+                    response.ContentType = "image/png";
+                    response.ContentLength64 = png.Length;
+                    response.OutputStream.Write(png, 0, png.Length);
+                    response.OutputStream.Close();
+                }
+            }
+            else if (request.HttpMethod == "GET" && path == "/world-map")
+            {
+                // The real vanilla world-map background (MapPage's own
+                // texture) — see WorldMapCache.cs. Combine with
+                // GameStateSnapshot's MapMarkerX/MapMarkerY (0-1
+                // fractions of this image's own width/height) to place
+                // the player's position marker.
+                byte[]? png = WorldMapCache.TryGet();
 
                 if (png is null)
                 {

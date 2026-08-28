@@ -21,6 +21,7 @@ namespace StardewDS
         private int? _pendingSelectIndex;
         private (int From, int To)? _pendingMove;
         private bool _pendingOrganize;
+        private bool _pendingOpenJournal;
 
         /*********
         ** Public methods
@@ -32,7 +33,7 @@ namespace StardewDS
             Harmony harmony = new(this.ModManifest.UniqueID);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-            this._server = new CompanionServer(this.Monitor, Port, this.OnSelectRequested, this.OnMoveRequested, this.OnOrganizeRequested);
+            this._server = new CompanionServer(this.Monitor, Port, this.OnSelectRequested, this.OnMoveRequested, this.OnOrganizeRequested, this.OnOpenJournalRequested);
 
             helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -110,6 +111,7 @@ namespace StardewDS
                 this.ApplyPendingSelection();
                 this.ApplyPendingMove();
                 this.ApplyPendingOrganize();
+                this.ApplyPendingOpenJournal();
             }
 
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
@@ -146,6 +148,15 @@ namespace StardewDS
             lock (this._pendingLock)
             {
                 this._pendingOrganize = true;
+            }
+        }
+
+        /// <summary>Called from the companion server's background thread when the app taps the new Journal button. Queues the request for <see cref="OnUpdateTicked"/> to apply on the main thread.</summary>
+        private void OnOpenJournalRequested()
+        {
+            lock (this._pendingLock)
+            {
+                this._pendingOpenJournal = true;
             }
         }
 
@@ -220,6 +231,25 @@ namespace StardewDS
                 return;
 
             ItemGrabMenu.organizeItemsInList(Game1.player.Items);
+        }
+
+        /// <summary>Applies (on the main thread) a pending "open journal" request from the app, if any — opens the real vanilla <see cref="QuestLog"/> menu, the same menu class the game's own journal key/quest-log button opens. Guarded the same way the real quest-log button's own click handler is (verified against the decompiled <c>DayTimeMoneyBox.receiveLeftClick</c>) — player able to move, no dialogue/event/farm-event in progress — plus not stomping an already-open menu, since a remote tap arriving mid-cutscene or while some other menu is already up shouldn't force one open.</summary>
+        private void ApplyPendingOpenJournal()
+        {
+            bool openJournal;
+            lock (this._pendingLock)
+            {
+                openJournal = this._pendingOpenJournal;
+                this._pendingOpenJournal = false;
+            }
+
+            if (!openJournal || Game1.player is null)
+                return;
+
+            if (Game1.activeClickableMenu is not null || !Game1.player.CanMove || Game1.dialogueUp || Game1.eventUp || Game1.farmEvent is not null)
+                return;
+
+            Game1.activeClickableMenu = new QuestLog();
         }
     }
 }

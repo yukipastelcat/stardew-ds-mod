@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Tools;
+using StardewValley.WorldMaps;
 
 namespace StardewDS
 {
@@ -14,7 +16,12 @@ namespace StardewDS
     /// documented in the modding community, but not compiled/tested here
     /// (see the project README) — if `dotnet build` flags a renamed
     /// member, <see cref="TotalEarnings"/> and the <see cref="Equipment"/>
-    /// fields are the ones most likely to have moved between versions;
+    /// fields are the ones most likely to have moved between versions,
+    /// alongside the newer <see cref="MapMarkerX"/>/<see cref="MapMarkerY"/>
+    /// fields, which lean on <c>StardewValley.WorldMaps.WorldMapManager</c>
+    /// (the real 1.6 world-map API, confirmed against the official
+    /// modding wiki's Data/WorldMap docs before writing — see
+    /// <see cref="WorldMapCache"/>);
     /// everything else (Money, health, Stamina, CurrentToolIndex,
     /// dayOfMonth, timeOfDay, weather flags) has been stable for years.
     /// </summary>
@@ -23,7 +30,23 @@ namespace StardewDS
         public string PlayerName { get; init; } = "";
         public string FarmName { get; init; } = "";
         public int Level { get; init; }
+
+        /// <summary>Farmer.getTitle() — the title shown under the player's name on the real Skills page (e.g. "Newcomer"), derived from total skill level.</summary>
+        public string Title { get; init; } = "";
         public int CurrentFunds { get; init; }
+
+        /// <summary>The five skill levels the Skills screen draws a pip row for — Farmer.FarmingLevel/MiningLevel/ForagingLevel/FishingLevel/CombatLevel, each already clamped >= 0 and including any active buff bonus (the same value the real SkillsPage.draw reads for its own pip-fill check and level number). Luck isn't reported here: vanilla's own Skills page only shows it once the player has found the Special Charm, and the app's Skills screen doesn't draw a luck row (see skills_screen.dart's doc comment).</summary>
+        public int FarmingLevel { get; init; }
+        public int MiningLevel { get; init; }
+        public int ForagingLevel { get; init; }
+        public int FishingLevel { get; init; }
+        public int CombatLevel { get; init; }
+
+        /// <summary>Farmer.hasVisibleQuests — whether there's at least one non-hidden quest or special order in the player's log right now. Mirrors the real vanilla quest-log button's own visibility check (DayTimeMoneyBox only draws `questButton` at all when this is true); the app's Journal button is always shown regardless (unlike vanilla, which hides the whole button), but this still gates whether the app should treat "open journal" as meaningful.</summary>
+        public bool HasVisibleQuests { get; init; }
+
+        /// <summary>Farmer.hasNewQuestActivity() — true while there's a quest or special order the player hasn't seen/acknowledged yet (a brand-new quest, or one that just became completable). Drives the Journal button's pulsing "new activity" badge, the same condition that pulses the real in-game quest-log button (DayTimeMoneyBox.questPulseTimer, re-armed once a second while this stays true) — see UiIconCache's "journal-pulse" icon.</summary>
+        public bool HasNewQuestActivity { get; init; }
 
         /// <summary>Team-wide lifetime earnings (money is shared in Stardew, so this isn't strictly "this farmer's" total — same figure the inventory menu shows).</summary>
         public long TotalEarnings { get; init; }
@@ -46,6 +69,15 @@ namespace StardewDS
 
         /// <summary>The game's own Game1.weatherIcon code — pass to `GET /weather-icon?n=` for the real HUD weather icon.</summary>
         public int WeatherIconCode { get; init; }
+
+        /// <summary>Display name of the location the player is currently in (e.g. "Farm", "Town", "The Mines") — <c>GameLocation.GetDisplayName()</c>, falling back to the raw internal <c>Name</c> for any location without a translated display name.</summary>
+        public string LocationName { get; init; } = "";
+
+        /// <summary>The player's position on the real vanilla world map (see <see cref="WorldMapCache"/>), as a 0-1 fraction of the map texture's width/height — multiply by the app's own rendered map size to place a marker. Null when the current location isn't mapped in `Data/WorldMap` (most mine/cave levels, a handful of interiors) — same as the real in-game map page, which simply shows no marker there either.</summary>
+        public double? MapMarkerX { get; init; }
+
+        /// <summary>See <see cref="MapMarkerX"/>.</summary>
+        public double? MapMarkerY { get; init; }
 
         public int BackpackSize { get; init; }
         public int SelectedIndex { get; init; }
@@ -92,6 +124,7 @@ namespace StardewDS
             // Main-thread only (touches the graphics device) — same
             // constraint as SpriteCache, called from the same place.
             PortraitRenderer.Refresh(player, Game1.graphics.GraphicsDevice);
+            MiniPortraitRenderer.Refresh(player, Game1.graphics.GraphicsDevice);
             UiIconCache.EnsureCached(Game1.graphics.GraphicsDevice);
 
             int seasonNumber = Utility.getSeasonNumber(Game1.currentSeason);
@@ -101,6 +134,7 @@ namespace StardewDS
             WindowBorderCache.EnsureCached(Game1.graphics.GraphicsDevice);
         ClockCache.EnsureCached(Game1.graphics.GraphicsDevice);
         InventorySlotIconCache.EnsureCached(Game1.graphics.GraphicsDevice);
+        WorldMapCache.EnsureCached(Game1.graphics.GraphicsDevice);
 
             string weather = "Sunny";
             if (Game1.isLightning) weather = "Stormy";
@@ -132,10 +166,19 @@ namespace StardewDS
                 // array to index. No array, no clamping needed.
                 int? waterLeft = null;
                 int? waterLeftMax = null;
+                bool waterCanIsBottomless = false;
                 if (item is WateringCan wateringCan)
                 {
                     waterLeft = wateringCan.WaterLeft;
                     waterLeftMax = wateringCan.waterCanMax;
+                    // Real vanilla `WateringCan.drawInMenu` tints its
+                    // water-gauge fill BlueViolet (full opacity) for a
+                    // bottomless can, vs. DodgerBlue at 70% opacity
+                    // otherwise (verified against decompiled
+                    // `WateringCan.cs` before writing) — the app mirrors
+                    // that same color choice, so this needs to ride the
+                    // snapshot alongside waterLeft/waterLeftMax.
+                    waterCanIsBottomless = wateringCan.IsBottomless;
                 }
 
                 // Quality (rarity star) — verified against the
@@ -174,9 +217,68 @@ namespace StardewDS
                     QualifiedItemId = item.QualifiedItemId,
                     WaterLeft = waterLeft,
                     WaterLeftMax = waterLeftMax,
+                    WaterCanIsBottomless = waterCanIsBottomless,
                     Quality = quality,
                     CooldownFraction = cooldownFraction,
                 });
+            }
+
+            GameLocation? location = player.currentLocation;
+            string locationName = location?.GetDisplayName() ?? location?.Name ?? "";
+
+            // Real vanilla world-map placement — StardewValley.WorldMaps.WorldMapManager
+            // is the actual 1.6 API MapPage itself uses to place the
+            // player's marker (replacing the old hardcoded per-region
+            // Rectangle math from earlier versions), confirmed against
+            // the official modding wiki's Data/WorldMap documentation
+            // before writing this rather than guessed. GetPositionData
+            // returns null for any location that isn't mapped (most
+            // mine/cave levels, a handful of interiors) — same as the
+            // real map page, which just shows no marker there.
+            double? markerX = null;
+            double? markerY = null;
+            if (location is not null && WorldMapCache.Width > 0 && WorldMapCache.Height > 0)
+            {
+                // GetPositionData/GetMapPixelPosition take the tile as a
+                // Point, not a Vector2 (player.Tile's own type) — confirmed
+                // by a real `dotnet build` error (CS1503) the wiki
+                // paraphrase didn't spell out the exact overload for.
+                Point tilePoint = new((int)player.Tile.X, (int)player.Tile.Y);
+
+                // GetPositionData actually returns MapAreaPositionWithContext
+                // (a wrapper pairing the real MapAreaPosition with its
+                // resolution context), not MapAreaPosition directly — a
+                // second real `dotnet build` error (CS0029) caught this;
+                // the wiki's paraphrased example elides the wrapper. `.Data`
+                // unwraps it — same fix Annosz/UIInfoSuite2 landed for the
+                // identical SV 1.6.14 API-shape bug (their PR #635, filed
+                // against stardew-valley-dedicated-server/server#13).
+                MapAreaPosition? positionData = WorldMapManager.GetPositionData(location, tilePoint)?.Data;
+                if (positionData is not null)
+                {
+                    Vector2 pixelPos = positionData.GetMapPixelPosition(location, tilePoint);
+                    // Real bug found 2026-08-28 from a screenshot showing
+                    // the marker pinned to the map's bottom-right corner
+                    // regardless of the player's actual position — root-
+                    // caused by fetching MapAreaPosition.cs from a real
+                    // 1.6 decompile (Dannode36/StardewValleyDecompiled,
+                    // not previously checked — the earlier wiki-based
+                    // research never surfaced this): GetMapPixelPosition
+                    // returns coordinates already scaled 4x — its own
+                    // GetPixelArea() does `rawArea.X * 4` etc, matching
+                    // MapPage.draw's own `scale: 4f` when it draws the
+                    // 300x180 base texture on screen — i.e. pixelPos is
+                    // in a 0..1200 x 0..720 space for the base region,
+                    // not the 0..300 x 0..180 raw-texture space
+                    // WorldMapCache.Width/Height describe. Dividing by
+                    // the un-scaled Width/Height alone gave a fraction up
+                    // to ~4.0 — always >1, hence always clamped to the
+                    // farthest corner app-side (see map_screen.dart's
+                    // clamp). Fixed by dividing out that same 4x factor.
+                    const double zoom = 4.0;
+                    markerX = pixelPos.X / (WorldMapCache.Width * zoom);
+                    markerY = pixelPos.Y / (WorldMapCache.Height * zoom);
+                }
             }
 
             Item? hat = player.hat.Value;
@@ -193,8 +295,17 @@ namespace StardewDS
                 PlayerName = player.Name,
                 FarmName = player.farmName.Value,
                 Level = player.Level,
+                Title = player.getTitle(),
                 CurrentFunds = player.Money,
                 TotalEarnings = player.totalMoneyEarned,
+
+                FarmingLevel = player.FarmingLevel,
+                MiningLevel = player.MiningLevel,
+                ForagingLevel = player.ForagingLevel,
+                FishingLevel = player.FishingLevel,
+                CombatLevel = player.CombatLevel,
+                HasVisibleQuests = player.hasVisibleQuests,
+                HasNewQuestActivity = player.hasNewQuestActivity(),
 
                 Health = player.health,
                 MaxHealth = player.maxHealth,
@@ -210,6 +321,10 @@ namespace StardewDS
                 Weather = weather,
                 SeasonNumber = seasonNumber,
                 WeatherIconCode = Game1.weatherIcon,
+
+                LocationName = locationName,
+                MapMarkerX = markerX,
+                MapMarkerY = markerY,
 
                 BackpackSize = player.MaxItems,
                 SelectedIndex = player.CurrentToolIndex,
@@ -249,6 +364,9 @@ namespace StardewDS
 
         /// <summary>Watering can capacity at its current upgrade level; null for anything else.</summary>
         public int? WaterLeftMax { get; init; }
+
+        /// <summary>True when this watering can is enchanted bottomless (never empties); always false for anything else. Mirrors the color choice real vanilla's own `WateringCan.drawInMenu` makes for its water gauge fill (BlueViolet, full opacity, vs. DodgerBlue at 70% opacity) — see <see cref="Capture"/>'s doc comment where this is computed.</summary>
+        public bool WaterCanIsBottomless { get; init; }
 
         /// <summary>Item quality: 0=normal (no star), 1=silver, 2=gold, 4=iridium. Only ever non-zero for <see cref="StardewValley.Object"/> items — see the doc comment where this is computed in <see cref="Capture"/>.</summary>
         public int Quality { get; init; }
