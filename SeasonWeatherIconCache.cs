@@ -19,9 +19,15 @@ namespace StardewDS
     /// <item>Season: <c>Rectangle(406, 441 + seasonNumber * 8, 12, 8)</c>,
     /// where seasonNumber comes from <c>Utility.getSeasonNumber</c>
     /// (spring=0, summer=1, fall=2, winter=3).</item>
-    /// <item>Weather: <c>Rectangle(317 + 12 * weatherIcon, 421, 12, 8)</c>,
-    /// where weatherIcon is read directly from the game's own
-    /// <see cref="Game1.weatherIcon"/> field — deliberately NOT
+    /// <item>Weather: <c>Rectangle(317 + 12 * weatherIcon, 421, 12, 8)</c>
+    /// out of <see cref="Game1.mouseCursors"/> for every normal weather
+    /// code, except green rain (<c>weatherIcon == 999</c>), which the
+    /// vanilla <c>DayTimeMoneyBox.draw</c> special-cases to
+    /// <c>Rectangle(243, 293, 12, 8)</c> out of
+    /// <see cref="Game1.mouseCursors_1_6"/> instead — <c>317 + 12 * 999</c>
+    /// is far outside the spritesheet, so without that branch the crop
+    /// throws every tick. weatherIcon is read directly from the game's
+    /// own <see cref="Game1.weatherIcon"/> field — deliberately NOT
     /// re-derived from the isRaining/isSnowing/etc. flags this mod
     /// already tracks for the <c>Weather</c> string, since the real
     /// <c>Game1.updateWeatherIcon()</c> logic turned out to be more
@@ -52,18 +58,23 @@ namespace StardewDS
             Cache[key] = Crop(new Rectangle(406, 441 + seasonNumber * 8, 12, 8), device);
         }
 
+        /// <summary>The game's own sentinel <see cref="Game1.weatherIcon"/> value for green rain.</summary>
+        private const int GreenRainWeatherIcon = 999;
+
         public static void EnsureWeatherCached(int weatherIcon, GraphicsDevice device)
         {
             string key = $"weather{weatherIcon}";
             if (Cache.ContainsKey(key))
                 return;
-            Cache[key] = Crop(new Rectangle(317 + 12 * weatherIcon, 421, 12, 8), device);
+            Cache[key] = weatherIcon == GreenRainWeatherIcon
+                ? Crop(Game1.mouseCursors_1_6, new Rectangle(243, 293, 12, 8), device)
+                : Crop(Game1.mouseCursors, new Rectangle(317 + 12 * weatherIcon, 421, 12, 8), device);
         }
 
-        private static byte[] Crop(Rectangle sourceRect, GraphicsDevice device)
+        private static byte[] Crop(Texture2D texture, Rectangle sourceRect, GraphicsDevice device)
         {
             var pixels = new Color[sourceRect.Width * sourceRect.Height];
-            Game1.mouseCursors.GetData(0, sourceRect, pixels, 0, pixels.Length);
+            texture.GetData(0, sourceRect, pixels, 0, pixels.Length);
 
             using Texture2D cropped = new(device, sourceRect.Width, sourceRect.Height);
             cropped.SetData(pixels);

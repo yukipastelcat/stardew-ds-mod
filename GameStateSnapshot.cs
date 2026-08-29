@@ -136,8 +136,11 @@ namespace StardewDS
         InventorySlotIconCache.EnsureCached(Game1.graphics.GraphicsDevice);
         WorldMapCache.EnsureCached(Game1.graphics.GraphicsDevice);
 
+            // Green rain is its own event that also sets Game1.isRaining, so
+            // check it first — matches the game's own weatherIcon == 999 case.
             string weather = "Sunny";
-            if (Game1.isLightning) weather = "Stormy";
+            if (Game1.isGreenRain) weather = "Green Rain";
+            else if (Game1.isLightning) weather = "Stormy";
             else if (Game1.isRaining) weather = "Rainy";
             else if (Game1.isSnowing) weather = "Snowy";
             else if (Game1.isDebrisWeather) weather = "Windy";
