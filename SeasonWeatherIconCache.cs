@@ -55,7 +55,7 @@ namespace StardewDS
             string key = $"season{seasonNumber}";
             if (Cache.ContainsKey(key))
                 return;
-            Cache[key] = Crop(new Rectangle(406, 441 + seasonNumber * 8, 12, 8), device);
+            Cache[key] = Crop(Game1.mouseCursors, new Rectangle(406, 441 + seasonNumber * 8, 12, 8), device);
         }
 
         /// <summary>The game's own sentinel <see cref="Game1.weatherIcon"/> value for green rain.</summary>
