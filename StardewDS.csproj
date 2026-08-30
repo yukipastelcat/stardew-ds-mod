@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>StardewDS</RootNamespace>
     <AssemblyName>StardewDS</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.0.0-alpha.0</Version>
     <EnableModDeploy>true</EnableModDeploy>
     <EnableModZip>true</EnableModZip>
   </PropertyGroup>

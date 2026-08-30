@@ -1,7 +1,7 @@
 {
   "Name": "StardewDS",
   "Author": "yukipastelcat",
-  "Version": "1.1.0",
+  "Version": "1.0.0-alpha.0",
   "Description": "Hides the vanilla hotbar and clock/day/money HUD (health/energy bars stay visible by design) and exposes the player's inventory, stats, and map to the StardewDS companion app over a local HTTP server.",
   "UniqueID": "Kirill.StardewDS",
   "EntryDll": "StardewDS.dll",

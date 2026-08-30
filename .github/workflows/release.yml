@@ -1,0 +1,229 @@
+name: Release mod
+
+# Manually triggered. Stamps the given version into manifest.json/StardewDS.csproj
+# (in the runner's checkout only - never committed), builds the mod zip against
+# the game/SMAPI reference assemblies reconstructed from the
+# STARDEW_REFASM_B64_* secrets, and publishes a GitHub Release tagged at this
+# commit with the zip attached.
+#
+# One-time setup: see README.md#ci-builds for how to (re)generate the
+# STARDEW_REFASM_B64_000..NNN secrets with ci-tools/generate-ci-secrets.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.2.0) - stamped into manifest.json/csproj at build time and used as the release tag (vVERSION). Not committed to source.'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Stamp version (build-only, not committed)
+        run: |
+          jq --arg v "${{ inputs.version }}" '.Version = $v' manifest.json > manifest.json.tmp
+          mv manifest.json.tmp manifest.json
+          sed -i "s#<Version>.*</Version>#<Version>${{ inputs.version }}</Version>#" StardewDS.csproj
+
+      - name: Init game reference assembly payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/refasm"
+          : > "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 1/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_000 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_001 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_002 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_003 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_004 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_005 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 2/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_006 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_007 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_008 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_009 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_010 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_011 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 3/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_012 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_013 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_014 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_015 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_016 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_017 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 4/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_018 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_019 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_020 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_021 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_022 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_023 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 5/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_024 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_025 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_026 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_027 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_028 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_029 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 6/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_030 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_031 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_032 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_033 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_034 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_035 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 7/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_036 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_037 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_038 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_039 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_040 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_041 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 8/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_042 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_043 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_044 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_045 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_046 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_047 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 9/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_048 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_049 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_050 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_051 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_052 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_053 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 10/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_054 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_055 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_056 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_057 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_058 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_059 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 11/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_060 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_061 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_062 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_063 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_064 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_065 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 12/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_066 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_067 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_068 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_069 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_070 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_071 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 13/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_072 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_073 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_074 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_075 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_076 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_077 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Append game reference assembly payload chunk 14/14
+        run: |
+          {
+            printf %s "${{ secrets.STARDEW_REFASM_B64_078 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_079 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_080 }}"
+            printf %s "${{ secrets.STARDEW_REFASM_B64_081 }}"
+          } >> "$RUNNER_TEMP/refasm/payload.b64"
+
+      - name: Extract game reference assemblies
+        run: |
+          if [ ! -s "$RUNNER_TEMP/refasm/payload.b64" ]; then
+            echo "::error::STARDEW_REFASM_B64_* secrets are not set. See README.md#ci-builds for how to generate them."
+            exit 1
+          fi
+          base64 -d "$RUNNER_TEMP/refasm/payload.b64" > "$RUNNER_TEMP/refasm/stardew-game-assemblies.tar.gz"
+          mkdir -p "$RUNNER_TEMP/stardew-game"
+          tar -xzf "$RUNNER_TEMP/refasm/stardew-game-assemblies.tar.gz" -C "$RUNNER_TEMP/stardew-game"
+          echo "GAME_PATH=$RUNNER_TEMP/stardew-game" >> "$GITHUB_ENV"
+
+      - name: Build mod (produces the release zip via ModBuildConfig)
+        run: dotnet build StardewDS.csproj -c Release "/p:GamePath=${{ env.GAME_PATH }}"
+
+      - name: Locate built zip
+        id: modzip
+        run: |
+          zip_path=$(ls bin/Release/net6.0/*.zip | head -n1)
+          if [ -z "$zip_path" ]; then
+            echo "::error::No mod zip found under bin/Release/net6.0/ - check EnableModZip in StardewDS.csproj."
+            exit 1
+          fi
+          echo "path=$zip_path" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" "${{ steps.modzip.outputs.path }}" \
+            --target "${{ github.sha }}" \
+            --title "v${{ inputs.version }}" \
+            --generate-notes
