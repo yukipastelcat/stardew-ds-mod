@@ -354,47 +354,43 @@ row when absent) in case this needs reverting on an older save format.
 
 ## CI builds
 
-`.github/workflows/release-build.yml` (in the `stardew-ds` repo) builds
-this mod's zip and the companion app's Android APK whenever a GitHub
-Release is published, then attaches both files to that release.
+`.github/workflows/release.yml` (in this repo) builds the mod zip
+whenever a GitHub Release is published on `stardew-ds-mod`, then attaches
+it to that release. (The parent `stardew-ds` repo's own `release.yml`
+handles pinning the `mod`/`companion` submodules and republishing their
+already-built artifacts under a `stardew-ds` release — it doesn't build
+anything itself.)
 
 The mod build uses `Pathoschild.Stardew.ModBuildConfig`, which compiles
 against the actual game/SMAPI DLLs (`Stardew Valley.dll`,
 `StardewValley.GameData.dll`, `MonoGame.Framework.dll`, `xTile.dll`,
 `StardewModdingAPI.dll`, `smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll`).
 Those are commercial/copyrighted files, so GitHub's hosted runners don't
-have them — they have to be supplied some other way, and since this repo
-is **public**, that rules out anything publicly downloadable (a Release
-asset, a committed file, etc). The only thing that stays private on a
-public repo is a GitHub Actions secret — but secrets are capped at 48KB
-each with 100 secrets per repo (~4.9MB total), and the six DLLs above
-gzip+base64 to ~5.2MB, just over that ceiling.
+have them and they can't be committed or downloaded publicly from this
+repo.
 
-The fix: `mod/ci-tools/refstrip` strips every method body out of the DLLs
-(replacing each with a 3-byte `ldnull; throw` stub) before packing them.
-The mod build only needs the DLLs' public type/method *signatures* to
-compile against — never the actual game logic — so this is safe and
-doesn't touch any metadata the compiler relies on (types, members,
-attributes, default parameter values, generic constraints, etc). It
-shrinks the gzipped payload from ~3.9MB to ~2.4MB (~3.3MB base64'd),
-which splits into 82 chunks comfortably under the 100-secret cap, with
-room for the DLLs to grow before this needs revisiting.
+The fix: those six files live in a separate **private** repo,
+[`yukipastelcat/stardew-ds-refs`](https://github.com/yukipastelcat/stardew-ds-refs).
+CI clones it with a **read-only SSH deploy key** (registered on
+`stardew-ds-refs`, stored here as the `REFS_DEPLOY_KEY` secret) via the
+`webfactory/ssh-agent` action, then points `ModBuildConfig` at the clone
+with `/p:GamePath=...`. Being a private repo is what keeps the DLLs from
+leaking, rather than any encoding trick — the deploy key only grants read
+access to that one repo, nothing else.
 
-**One-time setup** (and again whenever the game/SMAPI version changes),
-from a machine with the game + SMAPI installed, the .NET SDK (any recent
-version — the tool only needs `System.Reflection.Metadata`, no NuGet
-packages), and the GitHub CLI (`gh`, authenticated with a token that can
-manage repo secrets):
+`mod/ci-tools/refstrip` is still available if you want to strip method
+bodies out of the DLLs (replacing each with a 3-byte `ldnull; throw` stub)
+before committing them to `stardew-ds-refs`. The mod build only needs the
+DLLs' public type/method *signatures* to compile against — never the
+actual game logic — so stripping is safe and shrinks what ends up
+committed, even though it's no longer required to fit under a secret size
+cap the way it was with the old approach.
 
-```bash
-mod/ci-tools/generate-ci-secrets.sh "<your Stardew Valley install>" <you>/stardew-ds
-```
-
-That builds `refstrip`, strips the six DLLs, packs and chunks them, and
-uploads the resulting `STARDEW_REFASM_B64_000`..`_081` secrets via `gh`. If
-the chunk count it prints differs from 82, update the printf list in
-`.github/workflows/release-build.yml`'s "Reconstruct game reference
-assemblies" step to match — see the comment on that step.
+**One-time / version-update setup**: copy the six files listed above from
+your Stardew Valley install into a local clone of `stardew-ds-refs`
+(optionally running them through `refstrip` first), then commit and push.
+No `gh` CLI or secret management needed — just a normal git push, since
+`REFS_DEPLOY_KEY` only needs to be set once.
 
 If the `mod` and `companion` repos are private, `actions/checkout` also
 needs a token with read access to fetch them as submodules: set a repo

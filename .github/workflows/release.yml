@@ -1,16 +1,17 @@
 name: Release mod
 
 # Runs when a GitHub Release is published on this repo. Builds the mod zip
-# against the game/SMAPI reference assemblies (reconstructed from the
-# STARDEW_REFASM_B64_* secrets) using whatever version is already committed
-# in manifest.json/StardewDS.csproj, and attaches the zip to that release.
+# against the game/SMAPI reference assemblies (cloned from the private
+# yukipastelcat/stardew-ds-refs repo via a read-only deploy key) using
+# whatever version is already committed in manifest.json/StardewDS.csproj,
+# and attaches the zip to that release.
 #
 # Versioning is manual: bump manifest.json's Version and StardewDS.csproj's
 # <Version> yourself, commit, then publish a release on that commit - this
 # workflow only builds and attaches, it never creates or edits the release.
 #
-# One-time setup: see README.md#ci-builds for how to (re)generate the
-# STARDEW_REFASM_B64_000..NNN secrets with ci-tools/generate-ci-secrets.sh.
+# One-time setup: see README.md#ci-builds for how the REFS_DEPLOY_KEY secret
+# and the stardew-ds-refs repo are set up.
 
 on:
   release:
@@ -32,172 +33,14 @@ jobs:
         with:
           dotnet-version: '6.0.x'
 
-      - name: Init game reference assembly payload
-        run: |
-          mkdir -p "$RUNNER_TEMP/refasm"
-          : > "$RUNNER_TEMP/refasm/payload.b64"
+      - name: Load deploy key for reference assemblies
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.REFS_DEPLOY_KEY }}
 
-      - name: Append game reference assembly payload chunk 1/14
+      - name: Fetch game reference assemblies
         run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_000 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_001 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_002 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_003 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_004 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_005 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 2/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_006 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_007 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_008 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_009 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_010 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_011 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 3/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_012 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_013 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_014 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_015 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_016 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_017 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 4/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_018 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_019 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_020 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_021 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_022 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_023 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 5/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_024 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_025 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_026 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_027 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_028 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_029 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 6/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_030 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_031 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_032 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_033 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_034 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_035 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 7/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_036 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_037 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_038 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_039 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_040 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_041 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 8/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_042 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_043 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_044 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_045 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_046 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_047 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 9/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_048 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_049 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_050 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_051 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_052 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_053 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 10/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_054 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_055 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_056 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_057 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_058 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_059 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 11/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_060 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_061 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_062 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_063 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_064 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_065 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 12/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_066 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_067 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_068 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_069 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_070 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_071 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 13/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_072 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_073 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_074 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_075 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_076 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_077 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Append game reference assembly payload chunk 14/14
-        run: |
-          {
-            printf %s "${{ secrets.STARDEW_REFASM_B64_078 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_079 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_080 }}"
-            printf %s "${{ secrets.STARDEW_REFASM_B64_081 }}"
-          } >> "$RUNNER_TEMP/refasm/payload.b64"
-
-      - name: Extract game reference assemblies
-        run: |
-          if [ ! -s "$RUNNER_TEMP/refasm/payload.b64" ]; then
-            echo "::error::STARDEW_REFASM_B64_* secrets are not set. See README.md#ci-builds for how to generate them."
-            exit 1
-          fi
-          base64 -d "$RUNNER_TEMP/refasm/payload.b64" > "$RUNNER_TEMP/refasm/stardew-game-assemblies.tar.gz"
-          mkdir -p "$RUNNER_TEMP/stardew-game"
-          tar -xzf "$RUNNER_TEMP/refasm/stardew-game-assemblies.tar.gz" -C "$RUNNER_TEMP/stardew-game"
+          git clone --depth 1 git@github.com:yukipastelcat/stardew-ds-refs.git "$RUNNER_TEMP/stardew-game"
           echo "GAME_PATH=$RUNNER_TEMP/stardew-game" >> "$GITHUB_ENV"
 
       - name: Build mod (produces the release zip via ModBuildConfig)
