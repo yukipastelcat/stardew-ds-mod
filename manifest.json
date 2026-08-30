@@ -1,9 +1,9 @@
 {
   "Name": "StardewDS",
   "Author": "yukipastelcat",
-  "Version": "1.0.0-alpha.1",
+  "Version": "1.0.0-alpha.2",
   "Description": "Hides the vanilla hotbar and clock/day/money HUD (health/energy bars stay visible by design) and exposes the player's inventory, stats, and map to the StardewDS companion app over a local HTTP server.",
-  "UniqueID": "Kirill.StardewDS",
+  "UniqueID": "yukipastelcat.StardewDS",
   "EntryDll": "StardewDS.dll",
   "MinimumApiVersion": "4.0.0",
   "UpdateKeys": ["GitHub:yukipastelcat/stardew-ds-mod"]
