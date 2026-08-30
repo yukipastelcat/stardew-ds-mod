@@ -41,7 +41,7 @@ jobs:
       - name: Fetch game reference assemblies
         run: |
           git clone --depth 1 git@github.com:yukipastelcat/stardew-ds-refs.git "$RUNNER_TEMP/stardew-game"
-          echo "GAME_PATH=$RUNNER_TEMP/stardew-game" >> "$GITHUB_ENV"
+          echo "GAME_PATH=$RUNNER_TEMP/stardew-game/refs" >> "$GITHUB_ENV"
 
       - name: Build mod (produces the release zip via ModBuildConfig)
         run: dotnet build StardewDS.csproj -c Release "/p:GamePath=${{ env.GAME_PATH }}"
