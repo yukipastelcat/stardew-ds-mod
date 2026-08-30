@@ -88,21 +88,36 @@ namespace StardewDS
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
         /// <summary>
-        /// Length, in milliseconds, of a stabbing/defense sword's "on
-        /// cooldown after blocking" window — verified against the
-        /// decompiled <see cref="MeleeWeapon"/>: <c>animateSpecialMove</c>
-        /// sets the static <c>defenseCooldown</c> field to exactly 1500
-        /// when a defense sword (type 3) blocks, and
-        /// <c>drawInMenu</c>'s own red cooldown-wipe overlay divides that
-        /// same field by 1500 to get its 0-1 fill fraction — this mirrors
-        /// that fraction for the app instead of a cropped sprite, since
-        /// the real effect is a plain color overlay
-        /// (<c>Color.Red * 0.66f</c> over <c>Game1.staminaRect</c>, a 1x1
-        /// tinted pixel), not game art. Also applies to stabbing swords
-        /// (type 0) — <c>drawInMenu</c>'s switch handles both types
-        /// identically.
+        /// Cooldown-window lengths, in milliseconds, for each melee-weapon
+        /// type's special move — the divisors real vanilla
+        /// <see cref="MeleeWeapon"/>.<c>drawInMenu</c> uses to turn its
+        /// matching static cooldown field into the 0-1 fill fraction for
+        /// the red "reloading" wipe it draws over the icon. Verified
+        /// against the decompiled <c>drawInMenu</c> switch and
+        /// <c>doAnimateSpecialMove</c>:
+        /// <list type="bullet">
+        ///   <item>stabbing sword (type 0) / defense sword (type 3): the
+        ///     shared static <c>defenseCooldown</c>, set to 1500 on a
+        ///     block, divided by 1500.</item>
+        ///   <item>dagger (type 1): the static <c>daggerCooldown</c>, set
+        ///     to 3000 on a special stab, divided by 3000.</item>
+        ///   <item>club (type 2): the static <c>clubCooldown</c>, set to
+        ///     6000 on a ground pound, divided by 6000.</item>
+        /// </list>
+        /// (Professions/enchantments halve the value that gets *set*
+        /// in-game but not the divisor, so the fraction still starts at
+        /// &lt;= 1.) The wipe itself is <c>Color.Red * 0.66f</c> over
+        /// <c>Game1.staminaRect</c> (a 1x1 tinted pixel), not game art —
+        /// the app mirrors the fraction and paints a flat color overlay
+        /// rather than fetching a sprite. All three cooldown fields are
+        /// <c>static</c> (shared by every weapon instance, a real vanilla
+        /// quirk), so this reports the same fraction for every weapon slot
+        /// of the matching type, exactly as <c>drawInMenu</c> would draw
+        /// each of them. Scythes are excluded, same as <c>drawInMenu</c>.
         /// </summary>
         private const int DefenseCooldownWindowMs = 1500;
+        private const int DaggerCooldownWindowMs = 3000;
+        private const int ClubCooldownWindowMs = 6000;
 
         /// <summary>
         /// Builds a snapshot from the current game state. Must be called
@@ -195,21 +210,26 @@ namespace StardewDS
                 int quality = item is StardewValley.Object obj ? obj.Quality : 0;
 
                 // "Reloading" status — the real vanilla red cooldown-wipe
-                // overlay stabbing/defense swords draw over their own
-                // icon while blocked-and-recovering (see
-                // DefenseCooldownWindowMs's doc comment). MeleeWeapon's
-                // own `defenseCooldown` field is `static`, i.e. shared by
-                // every sword instance rather than tracked per-item —
-                // that's a real vanilla quirk, not a bug introduced
-                // here — so this reports the same fraction for every
-                // stabbing/defense sword slot, exactly matching what
-                // drawInMenu would show for each of them in-game.
+                // overlay a melee weapon draws over its own icon while its
+                // special move is recovering (see the cooldown-window
+                // consts' doc comment). vanilla `drawInMenu`'s own switch
+                // drives this off a different static field and divisor per
+                // weapon type, so an earlier version here that only checked
+                // `defenseCooldown` missed daggers and clubs entirely
+                // (issue #3) — this mirrors the full switch instead.
                 double? cooldownFraction = null;
-                if (item is MeleeWeapon weapon
-                    && (weapon.type.Value == MeleeWeapon.stabbingSword || weapon.type.Value == MeleeWeapon.defenseSword)
-                    && MeleeWeapon.defenseCooldown > 0)
+                if (item is MeleeWeapon weapon && !weapon.isScythe())
                 {
-                    cooldownFraction = System.Math.Clamp(MeleeWeapon.defenseCooldown / (double)DefenseCooldownWindowMs, 0.0, 1.0);
+                    (int cooldown, int window) = weapon.type.Value switch
+                    {
+                        MeleeWeapon.stabbingSword or MeleeWeapon.defenseSword
+                            => (MeleeWeapon.defenseCooldown, DefenseCooldownWindowMs),
+                        MeleeWeapon.dagger => (MeleeWeapon.daggerCooldown, DaggerCooldownWindowMs),
+                        MeleeWeapon.club => (MeleeWeapon.clubCooldown, ClubCooldownWindowMs),
+                        _ => (0, 1),
+                    };
+                    if (cooldown > 0)
+                        cooldownFraction = System.Math.Clamp(cooldown / (double)window, 0.0, 1.0);
                 }
 
                 inventory.Add(new InventorySlotDto
@@ -374,7 +394,7 @@ namespace StardewDS
         /// <summary>Item quality: 0=normal (no star), 1=silver, 2=gold, 4=iridium. Only ever non-zero for <see cref="StardewValley.Object"/> items — see the doc comment where this is computed in <see cref="Capture"/>.</summary>
         public int Quality { get; init; }
 
-        /// <summary>0-1 fraction of a stabbing/defense sword's real vanilla "reloading" cooldown-wipe overlay still remaining (1 = just blocked, 0/null = ready), or null if this item has no such cooldown. Rides the JSON snapshot directly as a plain number rather than a sprite endpoint — the real effect is a flat color overlay, not cropped game art (see <see cref="GameStateSnapshot.DefenseCooldownWindowMs"/>'s doc comment).</summary>
+        /// <summary>0-1 fraction of a melee weapon's real vanilla "reloading" cooldown-wipe overlay still remaining (1 = special move just used, 0/null = ready), or null if this item isn't a weapon on cooldown. Covers stabbing/defense swords (block), daggers (special stab) and clubs (ground pound) — each off its own vanilla cooldown field and divisor. Rides the JSON snapshot directly as a plain number rather than a sprite endpoint — the real effect is a flat color overlay, not cropped game art (see <see cref="GameStateSnapshot.DefenseCooldownWindowMs"/> and siblings' doc comment).</summary>
         public double? CooldownFraction { get; init; }
     }
 
