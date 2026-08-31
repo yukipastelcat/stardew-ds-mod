@@ -91,7 +91,7 @@ What it does once running:
     (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
     render than `/portrait` — reuse `/portrait` for anything that wants
     the full standing body. Same refresh cadence as `/portrait`.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet`
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|money-box|money-digit-0..money-digit-9|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
     organize/journal buttons, an item-quality star badge, a Skills
     screen skill icon or level-pip segment, the journal button's
@@ -140,7 +140,11 @@ What it does once running:
     (`Game1.hitShakeTimer > 0`) alongside the existing `health`/
     `maxHealth`/`energy`/`maxEnergy` — the app redraws the health/energy
     bars (hidden in-game, see `HudBarPatches.cs`) next to its clock and
-    uses these to reproduce the vanilla shake/pulse/droplet effects.
+    uses these to reproduce the vanilla shake/pulse/droplet effects. Also
+    reports `moneyShake` (`Game1.dayTimeMoneyBox.moneyShakeTimer > 0`) —
+    the app's funds box (the real `DayTimeMoneyBox` money sprite +
+    `MoneyDial` digit roll, rendered standalone) shakes / rolls / spawns
+    coins off `currentFunds` changing.
   - `GET /season-icon?n=<0-3>` and `GET /weather-icon?n=<code>` — PNGs of
     the real season/weather icons the vanilla clock HUD itself draws
     (`SeasonWeatherIconCache.cs`), keyed by `GameStateSnapshot`'s

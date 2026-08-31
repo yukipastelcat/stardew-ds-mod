@@ -65,6 +65,9 @@ namespace StardewDS
         /// <summary><c>Game1.hitShakeTimer &gt; 0</c> — vanilla jitters the health bar for 250–500ms after the player takes damage (and, at <c>health &lt;= 10</c>, spawns red blood droplets by it once a second). The companion reproduces the shake while this is true; it drives its own blood droplets off <see cref="Health"/> directly, matching vanilla's own <c>health &lt;= 10</c> check.</summary>
         public bool HealthShake { get; init; }
 
+        /// <summary><c>Game1.dayTimeMoneyBox.moneyShakeTimer &gt; 0</c> — vanilla jitters the money box for ~100ms whenever the player's money changes by a large amount (see <c>MoneyDial.draw</c>). The companion's funds box (see <c>funds_box.dart</c>) reproduces that shake, plus the digit-roll and coin/dust particles, off <see cref="CurrentFunds"/> changing.</summary>
+        public bool MoneyShake { get; init; }
+
         public string Weekday { get; init; } = "";
         public string Season { get; init; } = "";
         public int DayOfMonth { get; init; }
@@ -346,6 +349,7 @@ namespace StardewDS
                 Exhausted = player.exhausted.Value,
                 EnergyShake = Game1.staminaShakeTimer > 0,
                 HealthShake = Game1.hitShakeTimer > 0,
+                MoneyShake = (Game1.dayTimeMoneyBox?.moneyShakeTimer ?? 0) > 0,
 
                 Weekday = Weekdays[(Game1.dayOfMonth - 1) % 7],
                 Season = Capitalize(Game1.currentSeason),
