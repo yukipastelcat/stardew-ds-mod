@@ -106,31 +106,6 @@ namespace StardewDS
             ["journal"] = new Rectangle(383, 493, 11, 14),
             ["journal-pulse"] = new Rectangle(395, 497, 3, 8),
 
-            // Backpack toolbar's funds cell — the exact sprites vanilla's
-            // `DayTimeMoneyBox.drawMoneyBox` / `MoneyDial.draw` use
-            // (verified against the decompiled 1.6 source):
-            //   - the money-box backdrop (coin icon + digit well),
-            //     `Rectangle(340, 472, 65, 17)` on `Game1.mouseCursors`,
-            //     drawn at 4x. Its top edge is the visual join to the
-            //     clock box above it in-game; the companion renders it
-            //     standalone (see `funds_box.dart`).
-            //   - the 0-9 digit glyphs, `Rectangle(286, 502 - d*8, 5, 8)`,
-            //     drawn Maroon-tinted at 4x with a 24px advance. Served
-            //     one per digit so the app can compose an arbitrary
-            //     amount, same as the per-quality-star / per-skill-icon
-            //     entries above.
-            ["money-box"] = new Rectangle(340, 472, 65, 17),
-            ["money-digit-0"] = new Rectangle(286, 502, 5, 8),
-            ["money-digit-1"] = new Rectangle(286, 494, 5, 8),
-            ["money-digit-2"] = new Rectangle(286, 486, 5, 8),
-            ["money-digit-3"] = new Rectangle(286, 478, 5, 8),
-            ["money-digit-4"] = new Rectangle(286, 470, 5, 8),
-            ["money-digit-5"] = new Rectangle(286, 462, 5, 8),
-            ["money-digit-6"] = new Rectangle(286, 454, 5, 8),
-            ["money-digit-7"] = new Rectangle(286, 446, 5, 8),
-            ["money-digit-8"] = new Rectangle(286, 438, 5, 8),
-            ["money-digit-9"] = new Rectangle(286, 430, 5, 8),
-
             // Health / energy (stamina) bar pieces — the exact crops
             // vanilla `Game1.drawHUD` draws for the two bottom-right HUD
             // bars (verified against the decompiled `drawHUD`, SV 1.6:
@@ -182,7 +157,7 @@ namespace StardewDS
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "journal"/"journal-pulse", "money-box"/"money-digit-0".."money-digit-9", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 
