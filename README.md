@@ -1,11 +1,13 @@
 # stardew-ds-mod
 
-SMAPI mod for **StardewDS** — hides the vanilla hotbar and clock/day/money
-box (the phone app becomes the source of truth for those instead of the
-game drawing its own copy on screen), and exposes the player's inventory
-and stats to the [`companion-app`](../companion-app) Flutter app over a
-small local HTTP server. The health and energy (stamina) bars stay visible
-in-game — the app doesn't duplicate those.
+SMAPI mod for **StardewDS** — hides the vanilla hotbar, clock/day/money
+box, and health/energy (stamina) bars (the phone app becomes the source of
+truth for those instead of the game drawing its own copy on screen), and
+exposes the player's inventory and stats to the
+[`companion-app`](../companion-app) Flutter app over a small local HTTP
+server. The app redraws the health/energy bars next to its clock —
+including the vanilla "tired" face, the low-health pulse, the on-damage /
+low-stamina shake, and the blood/sweat droplet particles.
 
 ## Status
 
@@ -24,10 +26,19 @@ What it does once running:
   health/energy (stamina) bars (drawn inline inside `Game1.drawHUD`,
   right alongside the toolbar/clock, via the same `onScreenMenus` loop —
   confirmed against the decompiled source — so there was no way to hide
-  only some of what it draws), so it was hiding those too even though the
-  app doesn't duplicate them; switched to per-widget Harmony patches so
-  the health/energy bars can stay visible while the toolbar/clock stay
-  hidden.
+  only some of what it draws), so it was hiding those too; switched to
+  per-widget Harmony patches (toolbar + clock) instead. The health/energy
+  bars are now hidden as well, but deliberately *not* via `displayHUD` —
+  an IL transpiler on `Game1.drawHUD` (`HudBarPatches.cs`) snips out just
+  the two bar-drawing blocks and leaves the rest of `drawHUD` (buff icons,
+  level-up bars, the profession-17 forage sparkles) alone. The companion
+  app redraws the bars from real cropped sprites (`UiIconCache`'s
+  `vitals-*` entries) next to its clock.
+- Strips the vanilla stamina "sweat" droplet particles from
+  `Game1.uiOverlayTempSprites` each tick (`ModEntry.OnUpdateTicked`) — the
+  transpiler keeps `Game1.showingHealthBar` permanently false so the
+  *blood* droplets never spawn, but the sweat ones aren't gated on that
+  flag and would otherwise float next to a bar that's no longer drawn.
 - Forces `Game1.options.hardwareCursor = true` and calls
   `Game1.options.reApplySetOptions()` every tick, so the OS mouse cursor
   stays visible during gameplay. Confirmed against the decompiled
@@ -80,7 +91,7 @@ What it does once running:
     (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
     render than `/portrait` — reuse `/portrait` for anything that wants
     the full standing body. Same refresh cadence as `/portrait`.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|watering-can-gauge`
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
     organize/journal buttons, an item-quality star badge, a Skills
     screen skill icon or level-pip segment, the journal button's
@@ -123,6 +134,13 @@ What it does once running:
     `Farmer.hasVisibleQuests`/`hasNewQuestActivity()` — the latter drives
     the Journal button's pulsing badge, same trigger as the real
     in-game quest-log button's own pulse).
+  - `GET /state`'s (and `/ws`'s) snapshot reports `exhausted`
+    (`Farmer.exhausted` — over-tired; drives the app's "tired" face),
+    `energyShake` (`Game1.staminaShakeTimer > 0`) and `healthShake`
+    (`Game1.hitShakeTimer > 0`) alongside the existing `health`/
+    `maxHealth`/`energy`/`maxEnergy` — the app redraws the health/energy
+    bars (hidden in-game, see `HudBarPatches.cs`) next to its clock and
+    uses these to reproduce the vanilla shake/pulse/droplet effects.
   - `GET /season-icon?n=<0-3>` and `GET /weather-icon?n=<code>` — PNGs of
     the real season/weather icons the vanilla clock HUD itself draws
     (`SeasonWeatherIconCache.cs`), keyed by `GameStateSnapshot`'s
@@ -277,8 +295,18 @@ likely each is to have shifted:
    either method's been renamed/moved that one patch just won't apply
    (SMAPI logs a warning, doesn't crash) and that one widget (toolbar or
    clock box) reappears — there's no `displayHUD = false` fallback
-   anymore, since that also hid the health/energy bars, which this mod no
-   longer wants to hide.
+   anymore.
+4a. `HudBarPatches.cs` — the IL transpiler on `Game1.drawHUD` that snips
+   out the health/energy bar blocks. It anchors on the literal `0.625f`
+   stamina-bar `modifier` and the `Game1.onScreenMenus` field load that
+   immediately follows the bars. If a future game version reshapes
+   `drawHUD` past those anchors, the transpiler logs a warning and
+   no-ops (the vanilla bars stay visible and get duplicated by the app,
+   rather than the HUD crashing). Verified against the decompiled SV 1.6
+   `Game1.drawHUD` (github.com/Dannode36/StardewValleyDecompiled). The
+   `UiIconCache` `vitals-*` rects and the `Rectangle(366, 412, 5, 6)`
+   droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
+   decompile.
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
    against the real decompiled source (`InventoryPage.draw` for the

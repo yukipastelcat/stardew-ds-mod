@@ -13,8 +13,10 @@ namespace StardewDS
     /// backpack screen's organize and journal buttons, the three
     /// item-quality star badges (silver/gold/iridium), the five skill
     /// icons and skill-bar "pip" segments the Skills screen draws, the
-    /// quest-log button's own "new activity" pulse badge, and the
-    /// watering can's own water-level gauge frame — straight
+    /// quest-log button's own "new activity" pulse badge, the
+    /// watering can's own water-level gauge frame, and the health/energy
+    /// (stamina) bar pieces + their status decorations (tired face,
+    /// blood/sweat droplet) — straight
     /// out of the game's own `Cursors` spritesheet
     /// (<see cref="Game1.mouseCursors"/>), the exact same icons the
     /// vanilla game itself draws.
@@ -104,6 +106,39 @@ namespace StardewDS
             ["journal"] = new Rectangle(383, 493, 11, 14),
             ["journal-pulse"] = new Rectangle(395, 497, 3, 8),
 
+            // Health / energy (stamina) bar pieces — the exact crops
+            // vanilla `Game1.drawHUD` draws for the two bottom-right HUD
+            // bars (verified against the decompiled `drawHUD`, SV 1.6:
+            // stamina frame at x=256, health frame at x=268, each a
+            // 3-piece vertical sprite — 16px top cap, 16px stretchable
+            // middle, 16px bottom cap — drawn at 4x). The mod hides the
+            // real in-game bars (see `HudBarPatches.cs`) and the companion
+            // app redraws them next to its clock from these crops; the
+            // colored fill itself isn't a sprite (it's `Game1.staminaRect`
+            // tinted `Utility.getRedToGreenLerpColor`), reproduced app-side
+            // as a plain rect the same way the watering-can gauge fill and
+            // the weapon cooldown wipe are.
+            ["vitals-energy-cap-top"] = new Rectangle(256, 408, 12, 16),
+            ["vitals-energy-body"] = new Rectangle(256, 424, 12, 16),
+            ["vitals-energy-cap-bottom"] = new Rectangle(256, 448, 12, 16),
+            ["vitals-health-cap-top"] = new Rectangle(268, 408, 12, 16),
+            ["vitals-health-body"] = new Rectangle(268, 424, 12, 16),
+            ["vitals-health-cap-bottom"] = new Rectangle(268, 448, 12, 16),
+
+            // The little "tired" face vanilla `drawHUD` draws above the
+            // stamina bar while `Farmer.exhausted` is true —
+            // `Rectangle(191, 406, 12, 11)` on the Cursors sheet.
+            ["vitals-exhausted"] = new Rectangle(191, 406, 12, 11),
+
+            // The 5x6 droplet vanilla spawns into `Game1.uiOverlayTempSprites`
+            // near the bars — red blood drops when `health <= 10`
+            // (`Game1.drawHUD`'s per-second check), sky-blue sweat drops
+            // when stamina is low and a tool is used. Same source rect for
+            // both, tinted per spawn. The app runs its own particle layer
+            // from this crop; the mod strips the vanilla ones off the real
+            // HUD (see `ModEntry.OnUpdateTicked`).
+            ["vitals-droplet"] = new Rectangle(366, 412, 5, 6),
+
             // Watering can's own water-level gauge background/frame —
             // the exact crop vanilla's `WateringCan.drawInMenu` draws
             // via `spriteBatch.Draw(Game1.mouseCursors, location + new
@@ -122,7 +157,7 @@ namespace StardewDS
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "journal"/"journal-pulse", or "watering-can-gauge"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 

@@ -56,6 +56,15 @@ namespace StardewDS
         public int Energy { get; init; }
         public int MaxEnergy { get; init; }
 
+        /// <summary><c>Farmer.exhausted</c> — the player is over-tired (stamina hit 0, or they stayed up past 2am). Vanilla <c>Game1.drawHUD</c> draws a small "tired" face above the stamina bar while this is true; the mod hides the vanilla bar (see <see cref="HudBarPatches"/>) and the companion redraws that decoration from the "vitals-exhausted" icon.</summary>
+        public bool Exhausted { get; init; }
+
+        /// <summary><c>Game1.staminaShakeTimer &gt; 0</c> — vanilla jitters the whole stamina bar by ±3px for ~1s after the player spends stamina while low (and spawns sky-blue sweat droplets by it). The companion reproduces the shake + droplets while this is true.</summary>
+        public bool EnergyShake { get; init; }
+
+        /// <summary><c>Game1.hitShakeTimer &gt; 0</c> — vanilla jitters the health bar for 250–500ms after the player takes damage (and, at <c>health &lt;= 10</c>, spawns red blood droplets by it once a second). The companion reproduces the shake while this is true; it drives its own blood droplets off <see cref="Health"/> directly, matching vanilla's own <c>health &lt;= 10</c> check.</summary>
+        public bool HealthShake { get; init; }
+
         public string Weekday { get; init; } = "";
         public string Season { get; init; } = "";
         public int DayOfMonth { get; init; }
@@ -334,6 +343,9 @@ namespace StardewDS
                 MaxHealth = player.maxHealth,
                 Energy = (int)player.Stamina,
                 MaxEnergy = player.MaxStamina,
+                Exhausted = player.exhausted.Value,
+                EnergyShake = Game1.staminaShakeTimer > 0,
+                HealthShake = Game1.hitShakeTimer > 0,
 
                 Weekday = Weekdays[(Game1.dayOfMonth - 1) % 7],
                 Season = Capitalize(Game1.currentSeason),
