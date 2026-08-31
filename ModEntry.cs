@@ -1,5 +1,6 @@
 using System.Reflection;
 using HarmonyLib;
+using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewValley;
@@ -30,6 +31,8 @@ namespace StardewDS
         /// <param name="helper">Provides simplified APIs for writing mods.</param>
         public override void Entry(IModHelper helper)
         {
+            HudBarPatches.Monitor = this.Monitor;
+
             Harmony harmony = new(this.ModManifest.UniqueID);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
@@ -54,7 +57,7 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
@@ -106,6 +109,30 @@ namespace StardewDS
                 {
                     if (Game1.onScreenMenus[i] is Toolbar or DayTimeMoneyBox)
                         Game1.onScreenMenus.RemoveAt(i);
+                }
+
+                // The vanilla health/energy bars themselves are removed by
+                // an IL transpiler on Game1.drawHUD (see HudBarPatches.cs).
+                // The blood / sweat droplet particles that vanilla spawns
+                // *next to* those bars are a separate matter: they go into
+                // Game1.uiOverlayTempSprites from the game's update loop
+                // (not drawHUD), and the red blood ones are gated on
+                // Game1.showingHealthBar — which the transpiler now keeps
+                // permanently false — so those never spawn. The sky-blue
+                // "sweat" droplets on the stamina side are NOT gated on
+                // anything the transpiler touches, so they'd still appear
+                // on the real HUD, orphaned next to a bar that's no longer
+                // there. Strip them here (the app draws its own droplet
+                // layer — see companion/lib/widgets/vitals_bars.dart). The
+                // 5x6 source crop Rectangle(366, 412, 5, 6) on
+                // Game1.mouseCursors is the exact one vanilla uses for both
+                // droplet colors (verified against the decompiled
+                // Game1.cs) and isn't used for anything else in the HUD.
+                for (int i = Game1.uiOverlayTempSprites.Count - 1; i >= 0; i--)
+                {
+                    TemporaryAnimatedSprite sprite = Game1.uiOverlayTempSprites[i];
+                    if (sprite.texture == Game1.mouseCursors && sprite.sourceRect == new Rectangle(366, 412, 5, 6))
+                        Game1.uiOverlayTempSprites.RemoveAt(i);
                 }
 
                 this.ApplyPendingSelection();
