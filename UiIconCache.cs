@@ -109,17 +109,18 @@ namespace StardewDS
             // Backpack toolbar's funds cell — the exact sprites vanilla's
             // `DayTimeMoneyBox.drawMoneyBox` / `MoneyDial.draw` use
             // (verified against the decompiled 1.6 source):
-            //   - the money-box backdrop (coin icon + digit well),
-            //     `Rectangle(340, 472, 65, 17)` on `Game1.mouseCursors`,
-            //     drawn at 4x. Its top edge is the visual join to the
-            //     clock box above it in-game; the companion renders it
-            //     standalone (see `funds_box.dart`).
+            //   - the money-box backdrop (coin icon + 8-slot digit well),
+            //     `Rectangle(340, 472, 65, 17)` on `Game1.mouseCursors`.
+            //     The top 3 rows are the two peg "handles" that join it to
+            //     the clock box above in-game — cropped out here (start at
+            //     y+3, height 14) so the companion can render it standalone
+            //     (see `funds_box.dart`).
             //   - the 0-9 digit glyphs, `Rectangle(286, 502 - d*8, 5, 8)`,
             //     drawn Maroon-tinted at 4x with a 24px advance. Served
             //     one per digit so the app can compose an arbitrary
             //     amount, same as the per-quality-star / per-skill-icon
             //     entries above.
-            ["money-box"] = new Rectangle(340, 472, 65, 17),
+            ["money-box"] = new Rectangle(340, 475, 65, 14),
             ["money-digit-0"] = new Rectangle(286, 502, 5, 8),
             ["money-digit-1"] = new Rectangle(286, 494, 5, 8),
             ["money-digit-2"] = new Rectangle(286, 486, 5, 8),
