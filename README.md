@@ -398,13 +398,35 @@ have them and they can't be committed or downloaded publicly from this
 repo.
 
 The fix: those six files live in a separate **private** repo,
-[`yukipastelcat/stardew-ds-refs`](https://github.com/yukipastelcat/stardew-ds-refs).
-CI clones it with a **read-only SSH deploy key** (registered on
-`stardew-ds-refs`, stored here as the `REFS_DEPLOY_KEY` secret) via the
-`webfactory/ssh-agent` action, then points `ModBuildConfig` at the clone
-with `/p:GamePath=...`. Being a private repo is what keeps the DLLs from
-leaking, rather than any encoding trick — the deploy key only grants read
-access to that one repo, nothing else.
+[`yukipastelcat/stardew-ds-refs`](https://github.com/yukipastelcat/stardew-ds-refs),
+checked out here as the `vendor` git submodule (`vendor/lib/`). CI loads a
+**read-only SSH deploy key** (registered on `stardew-ds-refs`, stored here
+as the `REFS_DEPLOY_KEY` secret) via the `webfactory/ssh-agent` action
+*before* `actions/checkout`, so `actions/checkout`'s `submodules: recursive`
+step can fetch `vendor` over SSH, then points `ModBuildConfig` at
+`vendor/lib` with `/p:GamePath=...`. Being a private repo is what keeps the
+DLLs from leaking, rather than any encoding trick — the deploy key only
+grants read access to that one repo, nothing else.
+
+`vendor/lib/` needs exactly these six files, laid out like this:
+
+```
+vendor/
+└── lib/
+    ├── MonoGame.Framework.dll
+    ├── Stardew Valley.dll
+    ├── StardewModdingAPI.dll
+    ├── StardewValley.GameData.dll
+    ├── xTile.dll
+    └── smapi-internal/
+        └── SMAPI.Toolkit.CoreInterfaces.dll
+```
+
+That mirrors the layout inside a normal Stardew Valley install —
+`SMAPI.Toolkit.CoreInterfaces.dll` lives under the game's own
+`smapi-internal/` subfolder — so a contributor seeding `vendor/lib` for
+the first time can copy straight from their local install into the same
+relative paths.
 
 `mod/ci-tools/refstrip` is still available if you want to strip method
 bodies out of the DLLs (replacing each with a 3-byte `ldnull; throw` stub)
@@ -415,10 +437,12 @@ committed, even though it's no longer required to fit under a secret size
 cap the way it was with the old approach.
 
 **One-time / version-update setup**: copy the six files listed above from
-your Stardew Valley install into a local clone of `stardew-ds-refs`
-(optionally running them through `refstrip` first), then commit and push.
-No `gh` CLI or secret management needed — just a normal git push, since
-`REFS_DEPLOY_KEY` only needs to be set once.
+your Stardew Valley install into `vendor/lib` (the `vendor` submodule is its
+own clone of `stardew-ds-refs`), optionally running them through `refstrip`
+first, then commit and push from inside `vendor` and bump the submodule
+pointer here (`git add vendor && git commit`). No `gh` CLI or secret
+management needed — just normal git pushes, since `REFS_DEPLOY_KEY` only
+needs to be set once.
 
 If the `mod` and `companion` repos are private, `actions/checkout` also
 needs a token with read access to fetch them as submodules: set a repo

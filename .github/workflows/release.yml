@@ -1,17 +1,17 @@
 name: Release mod
 
 # Runs when a GitHub Release is published on this repo. Builds the mod zip
-# against the game/SMAPI reference assemblies (cloned from the private
-# yukipastelcat/stardew-ds-refs repo via a read-only deploy key) using
-# whatever version is already committed in manifest.json/StardewDS.csproj,
-# and attaches the zip to that release.
+# against the game/SMAPI reference assemblies checked out via the private
+# `vendor` git submodule (yukipastelcat/stardew-ds-refs, fetched with a
+# read-only deploy key) using whatever version is already committed in
+# manifest.json/StardewDS.csproj, and attaches the zip to that release.
 #
 # Versioning is manual: bump manifest.json's Version and StardewDS.csproj's
 # <Version> yourself, commit, then publish a release on that commit - this
 # workflow only builds and attaches, it never creates or edits the release.
 #
 # One-time setup: see README.md#ci-builds for how the REFS_DEPLOY_KEY secret
-# and the stardew-ds-refs repo are set up.
+# and the stardew-ds-refs repo (the vendor submodule) are set up.
 
 on:
   release:
@@ -25,26 +25,23 @@ jobs:
     name: Build and attach
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Load deploy key for reference assemblies
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.REFS_DEPLOY_KEY }}
+
+      - name: Checkout (with vendor submodule)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '6.0.x'
 
-      - name: Load deploy key for reference assemblies
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.REFS_DEPLOY_KEY }}
-
-      - name: Fetch game reference assemblies
-        run: |
-          git clone --depth 1 git@github.com:yukipastelcat/stardew-ds-refs.git "$RUNNER_TEMP/stardew-game"
-          echo "GAME_PATH=$RUNNER_TEMP/stardew-game/refs" >> "$GITHUB_ENV"
-
       - name: Build mod (produces the release zip via ModBuildConfig)
-        run: dotnet build StardewDS.csproj -c Release "/p:GamePath=${{ env.GAME_PATH }}"
+        run: dotnet build StardewDS.csproj -c Release "/p:GamePath=${{ github.workspace }}/vendor/lib"
 
       - name: Locate built zip
         id: modzip
