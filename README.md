@@ -428,6 +428,16 @@ That mirrors the layout inside a normal Stardew Valley install —
 the first time can copy straight from their local install into the same
 relative paths.
 
+**Gotcha**: `actions/checkout`'s `submodules: recursive` won't actually use
+the `webfactory/ssh-agent` key for `vendor` unless the checkout step also
+sets `persist-credentials: false`. By default `actions/checkout` persists
+its own `GITHUB_TOKEN` credentials, which takes priority over the SSH
+agent for *any* `git@github.com:` submodule URL — including `vendor`'s,
+which needs `REFS_DEPLOY_KEY`, not this repo's token. Without
+`persist-credentials: false` the submodule fetch fails with a "repository
+not found" error (the token has no access to the private `stardew-ds-refs`
+repo).
+
 `mod/ci-tools/refstrip` is still available if you want to strip method
 bodies out of the DLLs (replacing each with a 3-byte `ldnull; throw` stub)
 before committing them to `stardew-ds-refs`. The mod build only needs the
