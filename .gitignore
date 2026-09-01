@@ -58,3 +58,6 @@ nunit-*.xml
 
 # macOS
 .DS_Store
+
+# In case this workspace is ever opened with mod as the first root
+/dotnet/
