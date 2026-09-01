@@ -12,6 +12,19 @@ name: Release mod
 #
 # One-time setup: see README.md#ci-builds for how the REFS_DEPLOY_KEY secret
 # and the stardew-ds-refs repo (the vendor submodule) are set up.
+#
+# vendor is deliberately NOT fetched via actions/checkout's own
+# `submodules:` input. actions/checkout unconditionally rewrites
+# git@github.com: submodule URLs to HTTPS (using its own GITHUB_TOKEN)
+# whenever it performs the submodule fetch itself, unless you hand it an
+# `ssh-key` input directly - and that input would apply to the *whole*
+# checkout, including this repo's own clone, which REFS_DEPLOY_KEY isn't
+# authorized for (it's a read-only deploy key scoped to stardew-ds-refs
+# only). So the main repo is checked out normally, and vendor is fetched
+# afterwards with a plain `git submodule update`, once the deploy key's
+# SSH agent is loaded - a bare git command isn't subject to actions/
+# checkout's URL rewriting, so it honors the git@github.com: URL in
+# .gitmodules and authenticates with the agent as normal.
 
 on:
   release:
@@ -25,22 +38,16 @@ jobs:
     name: Build and attach
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Load deploy key for reference assemblies
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.REFS_DEPLOY_KEY }}
 
-      - name: Checkout (with vendor submodule)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          # actions/checkout persists its own GITHUB_TOKEN credentials by
-          # default, and that overrides *any* git@github.com: SSH URL during
-          # submodule fetch - including vendor's, which needs the separate
-          # REFS_DEPLOY_KEY loaded above, not this repo's token. Disabling
-          # persistence here lets the ssh-agent's key actually be used for
-          # the submodule fetch instead.
-          persist-credentials: false
+      - name: Fetch vendor submodule
+        run: git submodule update --init --recursive
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4

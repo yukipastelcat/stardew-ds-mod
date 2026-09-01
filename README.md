@@ -428,15 +428,23 @@ That mirrors the layout inside a normal Stardew Valley install —
 the first time can copy straight from their local install into the same
 relative paths.
 
-**Gotcha**: `actions/checkout`'s `submodules: recursive` won't actually use
-the `webfactory/ssh-agent` key for `vendor` unless the checkout step also
-sets `persist-credentials: false`. By default `actions/checkout` persists
-its own `GITHUB_TOKEN` credentials, which takes priority over the SSH
-agent for *any* `git@github.com:` submodule URL — including `vendor`'s,
-which needs `REFS_DEPLOY_KEY`, not this repo's token. Without
-`persist-credentials: false` the submodule fetch fails with a "repository
-not found" error (the token has no access to the private `stardew-ds-refs`
-repo).
+**Gotcha**: the workflow does *not* use `actions/checkout`'s own
+`submodules: recursive` input for this. By design, `actions/checkout`
+unconditionally rewrites `git@github.com:` submodule URLs to HTTPS
+(authenticating with its own `GITHUB_TOKEN`) whenever *it* performs the
+submodule fetch, unless you give it an `ssh-key` input — and that key
+would then apply to checking out this repo too, which `REFS_DEPLOY_KEY`
+isn't authorized for (it's a deploy key scoped read-only to
+`stardew-ds-refs`). So the workflow checks out this repo normally, loads
+`REFS_DEPLOY_KEY` via `webfactory/ssh-agent`, then runs a plain
+`git submodule update --init --recursive` as its own step — an ordinary
+git command isn't subject to `actions/checkout`'s URL rewriting, so it
+honors the `git@github.com:` URL in `.gitmodules` and authenticates with
+the loaded agent normally. (An earlier attempt used
+`submodules: recursive` plus `persist-credentials: false` on the checkout
+step, expecting that to stop the rewrite — it didn't; `persist-credentials`
+only controls whether credentials are *left behind* for later steps, not
+what `actions/checkout` itself does during its own submodule fetch.)
 
 `mod/ci-tools/refstrip` is still available if you want to strip method
 bodies out of the DLLs (replacing each with a 3-byte `ldnull; throw` stub)
