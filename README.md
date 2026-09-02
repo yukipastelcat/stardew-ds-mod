@@ -79,6 +79,22 @@ What it does once running:
     (which is what warms the crop into the cache); every `qualifiedItemId`
     in `/state`'s inventory/equipment fields is guaranteed already cached
     by the time you see it there.
+  - `GET /animal-sprite?type=<breed>` — PNG of that farm-animal breed's
+    OR house pet's real portrait (e.g. `?type=White Chicken` or
+    `?type=Cat`), cropped straight out of the animal's/pet's own loaded
+    sprite texture (`AnimalIconCache.cs`) — same not-bundled-by-the-app
+    approach as `/sprite`. Keyed by breed, not by individual
+    animal/pet, since every animal/pet of the same type shares one
+    texture; for a pet, `type` is `Pet.petType.Value` ("Cat"/"Dog"/a
+    modded pet type) plus `Pet.whichBreed.Value` when it isn't the
+    default "0" breed (e.g. "Cat", "Dog-1") rather than a `FarmAnimal.
+    type` string — see `AnimalIconCache.GetPetCacheKey`'s doc comment
+    for why (in short: `Pet.whichBreed` is a `NetString` in 1.6, not
+    the `int` an earlier pass here assumed). 404s until that breed has
+    appeared in at least one
+    `/state` response (same cache-warming pattern as `/sprite`); every
+    `type` in `/state`'s `animals` list is guaranteed already cached by
+    the time you see it there.
   - `GET /portrait` — PNG of the player's actual composited farmer sprite
     (body/shirt/pants/hair/hat/accessories), rendered off-screen the same
     way the vanilla inventory menu draws its own portrait box
@@ -91,7 +107,7 @@ What it does once running:
     (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
     render than `/portrait` — reuse `/portrait` for anything that wants
     the full standing body. Same refresh cadence as `/portrait`.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet`
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|heart-filled|heart-empty|hand-cursor|scroll-arrow-up|scroll-arrow-down|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet|petting-status-unpet|petting-status-pet|table-divider-h|table-divider-v|animals-tab`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
     organize/journal buttons, an item-quality star badge, a Skills
     screen skill icon or level-pip segment, the journal button's
@@ -108,7 +124,37 @@ What it does once running:
     water-level fill — the fill itself is a plain solid-color rect, not
     a sprite, so it rides the snapshot as `waterLeft`/`waterLeftMax`/
     `waterCanIsBottomless` instead, same pattern as `cooldownFraction`
-    below).
+    below). `hand-cursor` is the Animals table's "needs petting" icon
+    (vanilla's own pick-up-item hand cursor, repurposed rather than a
+    made-up icon) and `scroll-arrow-up`/`scroll-arrow-down` are the
+    Animals table's tap-to-scroll rail — both cropped from
+    `Game1.mouseCursors`, CORRECTED to the exact rects the real,
+    decompiled `StardewValley.Menus.AnimalPage` itself uses for these
+    same elements, from an earlier round's community-wiki-table
+    guesses — see risk area 9 below.
+    `petting-status-unpet`/`petting-status-pet` are the Animals table's
+    per-row "already pet today" indicator — CORRECTED to a dedicated,
+    purpose-built icon on a *different* sheet
+    (`Game1.mouseCursors_1_6`, not `Game1.mouseCursors`) that
+    `AnimalPage.drawNPCSlot` itself draws here, from an earlier round
+    that used the real but wrong `OptionsCheckbox` checkbox sprite
+    instead — see risk area 9 below. `table-divider-h`/
+    `table-divider-v` are the table's internal grid-line graphics,
+    cropped from a *different* sheet (`Game1.menuTexture`, not
+    Cursors) at the real vanilla
+    `IClickableMenu.drawHorizontalPartition`/`drawVerticalPartition`
+    tile indices, CORRECTED to the exact indices (25/26) `AnimalPage`
+    itself passes to those methods — see risk area 9 below.
+    `animals-tab` is the Animals nav tab's own icon — CORRECTED
+    twice now: a previous round briefly added a `social` icon
+    (removed, borrows a vanilla icon that means something else), then
+    replaced that with a standalone `/animal-tab-icon` route serving a
+    raw "White Chicken" creature-sprite crop (also removed, on the
+    mistaken assumption vanilla has no real `GameMenu` tab for
+    Animals — true in 1.5.6, not in 1.6). `animals-tab` now folds into
+    this same `/icon` route like every other UI icon, cropped from the
+    real vanilla `GameMenu` "animals" tab icon 1.6 itself added — see
+    risk area 9 below for the decompile citation.
   - `GET /state`'s (and `/ws`'s) inventory entries now also report
     `quality` (0=normal, 1=silver, 2=gold, 4=iridium — only ever
     non-zero for `StardewValley.Object` items, matching what vanilla
@@ -133,7 +179,14 @@ What it does once running:
     it either), and `hasVisibleQuests`/`hasNewQuestActivity` (mirroring
     `Farmer.hasVisibleQuests`/`hasNewQuestActivity()` — the latter drives
     the Journal button's pulsing badge, same trigger as the real
-    in-game quest-log button's own pulse).
+    in-game quest-log button's own pulse). `/state`'s (and `/ws`'s)
+    snapshot also reports `animals` — one entry per farm animal
+    (`name`, `type` breed string, `friendship` 0-1000, `wasPet`) for the
+    app's Animals screen. Scoped to friendship + petting status only —
+    no produce-ready state — matching the real, currently-published
+    `AnimalSocialMenu` mod's own scope (see `GameStateSnapshot.
+    AnimalDto`'s doc comment for the full reasoning). Defaults to an
+    empty list for backwards compat with older mod builds.
   - `GET /state`'s (and `/ws`'s) snapshot reports `exhausted`
     (`Farmer.exhausted` — over-tired; drives the app's "tired" face),
     `energyShake` (`Game1.staminaShakeTimer > 0`) and `healthShake`
@@ -355,6 +408,285 @@ likely each is to have shifted:
    comment). `GameLocation.GetDisplayName()` (used for `LocationName`)
    is the only piece of this round's work still not confirmed by a real
    build/screenshot.
+9. `AnimalIconCache.cs` / `GameStateSnapshot.cs`'s `Animals` field —
+   the newest, least-verified piece added this round. `Farm.
+   getAllFarmAnimals()`, `FarmAnimal.type`/`friendshipTowardFarmer`/
+   `wasPet`/`Name`, and `animal.Sprite.Texture`/`SpriteWidth`/
+   `SpriteHeight` are all long-stable, widely-used FarmAnimal members
+   (cross-checked against the real, currently-published
+   `AnimalSocialMenu` mod's own source rather than guessed — see
+   `GameStateSnapshot.AnimalDto`'s and `AnimalIconCache`'s doc
+   comments), but — like everything in this file — not compiled
+   against the real game here. The `heart-filled`/`heart-empty`
+   `UiIconCache` rects are the same friendship-heart crop
+   `AnimalSocialMenu` reads off `Game1.mouseCursors`, also
+   cross-checked rather than independently re-verified against a
+   decompile. Deliberately does *not* report `currentProduce`
+   (produce-ready state) — its exact 1.6 field type/shape wasn't
+   confidently determined here (see `GameStateSnapshot.AnimalDto`'s
+   doc comment for the scope reasoning), so it's left out rather than
+   guessed; a future round wanting it needs to confirm that field
+   against a real build first.
+
+   The `hand-cursor`/`scroll-arrow-up`/`scroll-arrow-down`
+   `UiIconCache` rects (`(32,0,16,16)`, `(76,72,40,44)`,
+   `(13,76,40,44)`) are lower-confidence than the heart rects above:
+   sourced from a community-maintained wiki table of `Cursors.png`
+   crops (stardewmodding.wiki.gg), not cross-checked against another
+   published mod's own source or a decompile, and that same wiki page
+   had at least one conflicting/unreliable entry for a nearby
+   coordinate that was discarded rather than used. If these look wrong
+   in-game (wrong crop, wrong icon entirely), that's the first place
+   to check.
+
+   House-pet (Cat/Dog) support — `GameStateSnapshot.CollectPets`,
+   `AnimalIconCache.EnsureCachedForPet`/`GetPetCacheKey` — added to fix
+   pets not appearing in the Animals list (a
+   `StardewValley.Characters.Pet` is an `NPC`, not a `FarmAnimal`, so
+   `Farm.getAllFarmAnimals()` never included it). This one has already
+   been through one real correction: the first pass here was written
+   against decompiled *1.5.6* source and shipped `int breed =
+   pet.whichBreed.Value` plus a `pet is Cat` type-check — a real
+   `dotnet build` against the actual installed 1.6 game failed with
+   CS0029 (`Cannot implicitly convert type 'string' to 'int'`) and a
+   CS0618 obsolete warning on `Cat`. Re-confirmed against real *1.6*
+   decompiled source this time
+   (Dannode36/StardewValleyDecompiled, `StardewValley.Characters/
+   Pet.cs`) rather than the older 1.5.6 repo used elsewhere in this
+   file: `Cat`/`Dog` are now `[Obsolete]` — every pet is just a `Pet`
+   with a `petType` (`NetString`, "Cat"/"Dog"/a modded pet type ID) and
+   a `whichBreed` (`NetString`, e.g. "0", not an int — content-pack
+   breed IDs can be arbitrary strings). `friendshipTowardFarmer`
+   (`NetInt`, `maxFriendship = 1000`) and `grantedFriendshipForPet`
+   (`NetBool`, reset in `Pet.dayUpdate`) are unchanged from 1.5.6, so
+   the friendship-scale/wasPet mapping this project already had was
+   still correct. `GetPetCacheKey` keys the cache on `petType.Value`
+   plus `whichBreed.Value` (e.g. "Cat", "Dog-1") — see that method's
+   doc comment.
+
+   This one went through a *second* real correction too, this time
+   caught by an in-app screenshot rather than a build error: the fix
+   above still cropped the portrait itself from `pet.Sprite`'s frame
+   (0, 0), same as `AnimalIconCache.EnsureCached` does for a
+   `FarmAnimal` — reasonable by analogy, but nothing actually confirmed
+   frame 0 was a pet's idle/portrait pose, and the resulting crop
+   looked wrong once tested against a real running game (not
+   recognizable as the pet's breed). `AnimalIconCache.
+   EnsureCachedForPet` now calls the real `Pet.GetPetIcon(out string
+   assetName, out Rectangle sourceRect)` instead — its own doc comment
+   in the 1.6 decompile says "Get the icon to show in the game menu for
+   this pet", i.e. this *is* vanilla's own intended portrait crop,
+   sourced from `Data/Pets` breed data and falling back to a known-good
+   `"Animals\dog"` crop if that data is missing. `CropAndCache` was
+   refactored to take an already-resolved `Texture2D`+`Rectangle`
+   instead of an `AnimatedSprite`, since `FarmAnimal` and `Pet` no
+   longer derive their crop the same way (FarmAnimal: sprite frame
+   (0,0); Pet: `GetPetIcon`'s own rect).
+
+   This one went through a *third* real correction, again caught by an
+   in-app screenshot rather than a build error: the `GetPetIcon` fix
+   above shipped, but the user's next screenshot still called it "wrong
+   sprite". Re-reading `GetPetIcon`'s own doc comment explains why —
+   "The 16x16 pixel area within the texture for the icon" is a small
+   menu-list thumbnail (the kind of icon a pet-customization/naming
+   list would use), not a portrait-scale crop, and was never a good
+   match for the reference screenshot's full-body pose in the first
+   place. What actually draws a pet on-screen in vanilla is `Pet.
+   draw`'s own `b.Draw(Sprite.Texture, ..., Sprite.SourceRect, ...)`
+   (confirmed by reading `Characters/Pet.cs`'s `draw` override
+   directly) — so `AnimalIconCache.EnsureCachedForPet` now reads
+   `pet.Sprite.Texture`/`pet.Sprite.SourceRect` directly instead,
+   the pet's own *live* current animation frame — the same texture and
+   rect vanilla's own renderer is using for that pet at that instant,
+   which by definition can't be "the wrong sprite" the way a menu-icon
+   crop or a blind frame-(0,0) guess could be. In practice this still
+   didn't fix it (see the *fourth* correction right below) — the flaw
+   wasn't the reasoning, it was that a live frame is non-deterministic
+   and `AnimalIconCache`'s cache is write-once per key (see
+   `CropAndCache`): whatever frame the pet happened to be mid-animation
+   on the *first* tick it was seen got cached forever for that pet.
+
+   This one went through a *fourth* real correction, this time
+   prompted by the user pointing at the actual Stardew Valley Wiki
+   modding docs (stardewvalleywiki.com/Modding:Pets, "Spritesheet
+   Layout") instead of another decompile-only inference. Per that page:
+   pet spritesheets are 128px wide with 32x32 frames (4 per row,
+   matching `Pet`'s own constructor call, `new AnimatedSprite(
+   getPetTextureName(), 0, 32, 32)`), and frames 0-3 are the "move
+   down" cycle — frame 0 *is* the standing-still, facing-the-camera
+   pose, the same "row 0 = idle facing down" convention every other
+   character/animal spritesheet in this game follows (and the same
+   assumption `EnsureCached(FarmAnimal, GraphicsDevice)` already relies
+   on successfully). So `AnimalIconCache.EnsureCachedForPet` reverted to
+   frame (0, 0) after all — attempt 1's *rectangle* was right, it just
+   wasn't backed by anything better than a guess at the time, and the
+   "orange flame"-looking result that first moved this method away
+   from it was more likely a dimension/texture bug in that early draft
+   than a genuinely wrong frame choice. This crop reads the sprite's
+   own reported `SpriteWidth`/`SpriteHeight` rather than hardcoding 32,
+   the same defensive pattern the `FarmAnimal` overload already uses,
+   so it can't silently drift from whatever size the live
+   `AnimatedSprite` actually reports. This is now deterministic (no
+   more write-once-cache risk from an unlucky mid-animation frame),
+   unlike the third correction.
+
+   The table's internal grid divider lines (`table-divider-h`/
+   `table-divider-v`) and the per-row petting status glyph (now
+   `petting-status-unpet`/`petting-status-pet` — renamed this round,
+   see below) were added in an earlier round in `UiIconCache.cs`,
+   replacing flat colored placeholders. The divider lines used
+   `UiIconCache.EnsureCached` calling the real
+   `Game1.getSourceRectForStandardTileSheet(Game1.menuTexture, index)`
+   helper directly, with tile indices 6 (horizontal)/5 (vertical) —
+   both the helper's signature/default tile size (64x64, not 16x16 —
+   verified by reading `Game1.cs`'s own
+   `getSourceRectForStandardTileSheet` body) and `Game1.menuTexture`'s
+   asset name (`"Maps\MenuTiles"`, confirmed by reading `Game1.cs`'s
+   own `LoadContent`) came from the real decompiled source. The
+   checkbox-shaped status glyph's rects (`(227,425,9,9)`/
+   `(236,425,9,9)`) were read directly off the decompiled
+   `StardewValley.Menus.OptionsCheckbox` — the exact crop every real
+   in-game options checkbox uses, on the assumption the Animals
+   table's "already pet today" indicator was a reused generic
+   checkbox. Both turned out to be wrong once tested — see the fifth
+   correction below.
+
+   `animals-tab` (the Animals nav tab's own icon) went through its own
+   two corrections, both in `UiIconCache.cs` rather than here, but
+   worth recording alongside the rest of this Animals-feature history:
+   a first pass borrowed a `social` tab icon (removed — it means
+   something else in real vanilla); a second pass gave up on finding a
+   real vanilla tab for Animals at all and served a raw "White
+   Chicken" creature-sprite crop instead (via a dedicated
+   `/animal-tab-icon` route, now removed). Both were wrong for the
+   same reason: vanilla 1.6 actually added a real `animals` tab to
+   `GameMenu` (confirmed by reading the decompiled `GameMenu.cs`
+   directly — its own `tabs.Add(...)` list includes one, string key
+   `"1_6_Strings:GameMenu_Animals"`, and its `draw` method's per-tab
+   icon switch has a case for it), it's just drawn from a second,
+   newer sheet 1.6 introduced (`Game1.mouseCursors_1_6`, asset
+   `"LooseSprites\Cursors_1_6"`) rather than the original Cursors
+   sheet every other tab icon in this file reads — easy to miss if you
+   only check the original sheet's own tab-icon row. `animals-tab`
+   crops `Rectangle(257, 246, 16, 16)` off that second sheet, the
+   exact rect `GameMenu.draw`'s `"animals"` case passes to its own
+   `b.Draw(Game1.mouseCursors_1_6, ...)` call.
+
+   This whole feature got a *fifth* real correction, and by far the
+   most consequential one: finding that `GameMenu` really does have an
+   `"animals"` tab (above) prompted browsing the rest of the decompiled
+   `StardewValley.Menus` directory, which turned up
+   `AnimalPage.cs` — vanilla 1.6's own complete "Animals" `GameMenu`
+   page. It turns out to be almost exactly what this app's own Animals
+   screen has been trying to reproduce from partial citations and
+   inference across all four corrections above, and reading it
+   directly settled every one of them at once with an authoritative,
+   exact answer:
+   - **Pet portrait** (`AnimalIconCache.EnsureCachedForPet`): the
+     fourth correction's wiki-sourced `Rectangle(0, 0, SpriteWidth,
+     SpriteHeight)` "frame 0 is idle" guess is superseded by
+     `AnimalEntry`'s own real formula,
+     `Rectangle(0, SourceRect.Height * 2 - 24, SourceRect.Width, 24)`
+     — a fixed pixel-math crop that (per the wiki's own 32px-frame,
+     4-frames-per-row layout) lands in the bottom 24px of the third
+     row ("move up"), not row 0 ("move down"/idle) — consistent with
+     the user's own follow-up observation that the render looked like
+     a side-facing pose rather than a front-facing idle one.
+   - **FarmAnimal portrait** (`AnimalIconCache.EnsureCached`): the
+     original frame-(0,0) crop (cross-checked only against the
+     `AnimalSocialMenu` community mod, never against vanilla's own
+     Animals menu) is superseded by `AnimalEntry`'s own branching
+     formula — tall breeds (cows/pigs/sheep/goats, `SourceRect.Height
+     > 16`) crop `Rectangle(0, SourceRect.Height * 2 - 28,
+     SourceRect.Width, 28)` (Ostrich specifically uses `* 2 - 32`);
+     short breeds (chickens/ducks/rabbits) crop the fixed
+     `Rectangle(0, 16, 16, 16)` instead.
+   - **hand-cursor**: `AnimalPage.drawNPCSlot`'s own hand-cursor draw
+     call uses `Rectangle(32, 0, 10, 10)`, not the earlier `(32, 0, 16,
+     16)` community-wiki guess — the guess over-cropped 6px into the
+     neighboring cursor frames on both axes. `drawNPCSlot` also draws
+     this icon *unconditionally*, every row, at full opacity — there's
+     no real vanilla dimming/fading based on pet status; only the
+     status glyph below it (next bullet) changes.
+   - **petting-status-unpet/petting-status-pet** (renamed from
+     `petting-checkbox-unchecked`/`petting-checkbox-checked`): the
+     `OptionsCheckbox` sprite above was an entirely wrong real sprite,
+     not a wrong rect — `drawNPCSlot` reveals the real per-row
+     indicator is a dedicated, purpose-built icon on the *newer*
+     `Game1.mouseCursors_1_6` sheet (the same sheet `animals-tab`
+     itself reads), at `Rectangle(273 + WasPetYet * 9, 253, 9, 9)` —
+     a real 3-state enum (`WasPetYet`: 0 = not pet, 1 = auto-pet, 2 =
+     hand-pet) this app's own `AnimalDto.wasPet` bool only
+     distinguishes two states of. This fully explains repeated
+     in-app feedback that the checkbox/"green cross" icon was wrong —
+     it was a real, decompile-verified sprite, just the wrong one for
+     this specific menu.
+   - **scroll-arrow-up/scroll-arrow-down**: `AnimalPage`'s own
+     constructor builds its up/down scroll buttons from
+     `Rectangle(421, 459, 11, 12)`/`Rectangle(421, 472, 11, 12)`, not
+     the earlier `(76, 72, 40, 44)`/`(13, 76, 40, 44)` pair sourced
+     from an unrelated community wiki table.
+   - **table-divider-h/table-divider-v**: `AnimalPage.draw()` calls
+     `drawHorizontalPartition`/`drawVerticalPartition` with
+     `small: true` — and the decompiled `IClickableMenu`'s `small`
+     branch uses *different* tile indices (25 horizontal, 26
+     vertical) than the non-`small` branch this file had used (6, 5).
+   - **hearts** (`heart-filled`/`heart-empty`): the only element
+     `AnimalPage.drawNPCSlot` confirmed as already correct, no change
+     — it reads this exact same pair.
+
+   None of this was guessed or inferred a fifth time — every rect and
+   formula above was read directly out of `AnimalPage.cs`'s own draw
+   and constructor code, the same real menu this app's Animals screen
+   is modeled after, which is why this correction is treated as
+   settling these specific elements rather than opening a sixth round
+   of inference.
+
+   Where a pet actually *is* at snapshot time is the one part still
+   worth flagging: a Pet sits in a `GameLocation`'s own `characters`
+   collection rather than any animal-specific list (confirmed via
+   `Farm.cs`'s own
+   `this.characters[index] is Pet` check, both in the 1.5.6 and 1.6
+   decompiles), and can be either out on the farm or asleep in the
+   farmhouse (`Pet.warpToFarmHouse` moves it into
+   `Utility.getHomeOfFarmer(who)`'s `characters`) — both locations are
+   checked, but a modded location that relocates a pet somewhere else
+   entirely wouldn't be covered.
+
+   A later round fixed how the companion app *renders* the
+   `table-divider-h`/`table-divider-v` crops (app-side, `_HorizontalRule`/
+   `_VerticalRule` in `animals_screen.dart`) rather than what's cropped:
+   they were being stretched with `BoxFit.fill` from the full 64x64 crop
+   down to a 6px-tall/wide box, which — sampled with nearest-neighbor
+   filtering — squashed whatever beveled wood-grain detail the tile
+   actually has into what read as a flat solid line, not the textured
+   divider vanilla draws. Changed to tile the crop at its native pixel
+   size instead (`Image.network`'s `scale: 4` — `Game1.pixelZoom` —
+   maps the served 64x64 PNG back to a 16x16 logical tile, matching the
+   16x16 native size every other icon in this cache already uses, then
+   `ImageRepeat.repeatX`/`repeatY` tiles it across the divider's length,
+   the same repeated-small-tile technique vanilla's own
+   `drawHorizontalPartition`/`drawVerticalPartition` use rather than one
+   stretched instance). `_AnimalTable`/`_AnimalRow` also now reserve a
+   real 16px gap for each divider instead of overlaying it on the
+   hearts/status columns' own zero-margin content, which a full-size
+   tile would otherwise clip into.
+
+   Unlike every other correction in this risk area, this one is **not**
+   decompile-confirmed: several attempts this round to reach a real
+   `IClickableMenu.cs` decompile (a few public decompile-mirror repos on
+   GitHub, GitHub's own code search/contents API, jsdelivr's file
+   listing, modding-forum threads) all failed — 404s on guessed file
+   paths, 403s that looked like rate-limiting on the larger listings,
+   robots.txt blocks on GitHub's code-search UI, and one large
+   file-listing response that got truncated before reaching the `M`s
+   alphabetically. So the 16px/4x figures are inferred from the
+   64x64-tile-is-4x-native-16x16 pattern every other `UiIconCache` entry
+   already follows, not read off `drawHorizontalPartition`/
+   `drawVerticalPartition`'s own draw loop the way the crop rects
+   (tile indices 25/26) were. If a future round gets real decompile
+   access, this is the next thing to verify — the crop rects themselves
+   aren't in question, just the exact size/loop vanilla renders them at.
 
 `player.totalMoneyEarned` (a `uint` proxying the co-op team's shared
 lifetime earnings) is now read into the snapshot's `TotalEarnings` field
@@ -375,6 +707,7 @@ row when absent) in case this needs reverting on an older save format.
 - `PortraitBackgroundCache.cs` — crops the day/night portrait backdrop
 - `WindowBorderCache.cs` — crops the 9-slice menu window-border texture
 - `WorldMapCache.cs` — serves the real vanilla world map background texture
+- `AnimalIconCache.cs` — crops real farm-animal AND house-pet (Cat/Dog) breed portraits, keyed by type
 - `ClockCache.cs` — crops the clock/day box backdrop and its sundial needle
 - `HudPatches.cs` — Harmony patch that skips drawing the toolbar
 - `manifest.json` — SMAPI mod manifest

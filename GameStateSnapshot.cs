@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Characters;
 using StardewValley.Tools;
 using StardewValley.WorldMaps;
 
@@ -93,6 +94,12 @@ namespace StardewDS
         public List<InventorySlotDto?> Inventory { get; init; } = new();
 
         public EquipmentDto Equipment { get; init; } = new();
+
+        /// <summary>Farm animals on the player's farm — see AnimalDto's
+        /// doc comment for scope (friendship + petting status only, no
+        /// produce state). Defaults to empty for backwards compat with
+        /// older mod builds that don't report this yet.</summary>
+        public List<AnimalDto> Animals { get; init; } = new();
 
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
@@ -322,6 +329,57 @@ namespace StardewDS
             SpriteCache.EnsureCached(rightRing?.QualifiedItemId);
             SpriteCache.EnsureCached(boots?.QualifiedItemId);
 
+            // Farm animals — coops/barns/pasture, via the same
+            // aggregating helper most published SMAPI mods use for
+            // this (Farm.getAllFarmAnimals(), which internally covers
+            // animals both inside buildings and out on the pasture).
+            // Scoped to friendship + petting status only — see
+            // AnimalDto's doc comment for why produce-ready state isn't
+            // reported.
+            var animals = new List<AnimalDto>();
+            if (Game1.getFarm() is Farm farm)
+            {
+                foreach (FarmAnimal animal in farm.getAllFarmAnimals())
+                {
+                    // Cache-warm this breed's portrait crop now, on the
+                    // main thread, before this snapshot is published —
+                    // same warm-before-publish pattern SpriteCache.
+                    // EnsureCached uses above for inventory items.
+                    AnimalIconCache.EnsureCached(animal, Game1.graphics.GraphicsDevice);
+
+                    animals.Add(new AnimalDto
+                    {
+                        Name = animal.Name,
+                        Type = animal.type.Value,
+                        Friendship = animal.friendshipTowardFarmer.Value,
+                        WasPet = animal.wasPet.Value,
+                    });
+                }
+
+                // House pets (Cat/Dog) — a StardewValley.Characters.Pet
+                // is NOT a FarmAnimal (it's an NPC subclass), so the
+                // farm-animal loop above never sees it; this is why an
+                // earlier round of this snapshot silently dropped the
+                // player's cat/dog from the Animals list entirely. A
+                // Pet instead lives in a GameLocation's own
+                // `characters` collection — confirmed via decompiled
+                // 1.5.6 source: Farm.cs's own animal-interaction code
+                // checks `this.characters[index] is Pet`, so the farm
+                // itself is one place to look (see this project's
+                // README "Known risk areas" for the exact source
+                // cited).
+                CollectPets(farm, animals);
+            }
+
+            // A pet can also be asleep indoors rather than out on the
+            // farm — Pet.cs's own `warpToFarmHouse` moves a sleeping
+            // pet into `Utility.getHomeOfFarmer(who)`'s `characters`
+            // list (same decompiled source cited above), so the
+            // farmhouse is checked too, independent of whether
+            // Game1.getFarm() resolved above.
+            if (Utility.getHomeOfFarmer(player) is { } home)
+                CollectPets(home, animals);
+
             return new GameStateSnapshot
             {
                 PlayerName = player.Name,
@@ -376,11 +434,48 @@ namespace StardewDS
                     Boots = boots?.DisplayName,
                     BootsId = boots?.QualifiedItemId,
                 },
+                Animals = animals,
             };
         }
 
         private static string Capitalize(string s) =>
             string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+        /// <summary>
+        /// Finds any <see cref="Pet"/> (Cat/Dog) among
+        /// <paramref name="location"/>'s own characters, cache-warms its
+        /// breed portrait, and appends it to <paramref name="animals"/>
+        /// as another <see cref="AnimalDto"/> — same unified list the
+        /// Animals screen already renders farm animals into, so a house
+        /// pet just shows up as another row rather than needing its own
+        /// screen section. See the "Known risk areas" note on why a
+        /// GameLocation's `characters` list (not
+        /// Farm.getAllFarmAnimals()) is how pets are found at all.
+        /// </summary>
+        private static void CollectPets(GameLocation location, List<AnimalDto> animals)
+        {
+            foreach (NPC character in location.characters)
+            {
+                if (character is not Pet pet)
+                    continue;
+
+                AnimalIconCache.EnsureCachedForPet(pet, Game1.graphics.GraphicsDevice);
+
+                animals.Add(new AnimalDto
+                {
+                    Name = pet.Name,
+                    // Same cache key AnimalIconCache.EnsureCachedForPet
+                    // just cropped this pet's portrait under — see
+                    // GetPetCacheKey's doc comment for why this isn't
+                    // FarmAnimal.type-style species+int-breed anymore
+                    // (a real `dotnet build` against 1.6 caught that
+                    // `Pet.whichBreed` is a NetString, not a NetInt).
+                    Type = AnimalIconCache.GetPetCacheKey(pet),
+                    Friendship = pet.friendshipTowardFarmer.Value,
+                    WasPet = pet.grantedFriendshipForPet.Value,
+                });
+            }
+        }
     }
 
     internal sealed class InventorySlotDto
@@ -420,5 +515,38 @@ namespace StardewDS
         public string? RightRingId { get; init; }
         public string? Boots { get; init; }
         public string? BootsId { get; init; }
+    }
+
+    /// <summary>
+    /// One farm animal OR house pet — the two are unified into this one
+    /// DTO/list because the app's Animals screen shows them as a single
+    /// table (matching the reference in-game screenshot the screen was
+    /// built from), even though they're different game objects
+    /// underneath (see GameStateSnapshot.CollectPets). Scoped to what
+    /// that screen actually shows: a name, a breed (for
+    /// <c>GET /animal-sprite?type=</c>'s cache key — see
+    /// AnimalIconCache), and how affectionate it is. Deliberately
+    /// doesn't report <c>currentProduce</c>/mood/age/etc — vanilla
+    /// itself has no "Animals" page at all (farm animals aren't listed
+    /// anywhere in the real game's own GameMenu); the closest real
+    /// precedent is the well-known AnimalSocialMenu mod
+    /// (spacechase0/AnimalSocialMenu), which adds exactly this same
+    /// scope — a friendship/petting list, nothing about produce — so
+    /// this DTO matches that rather than guessing at a wider one. A
+    /// future round wanting more needs new fields here first (see this
+    /// project's README route list).
+    /// </summary>
+    internal sealed class AnimalDto
+    {
+        public string Name { get; init; } = "";
+
+        /// <summary>For a farm animal: FarmAnimal.type, its species/breed (e.g. "White Chicken", "Dairy Cow"). For a house pet: Pet.petType.Value ("Cat"/"Dog"/a modded pet type) plus Pet.whichBreed.Value when it isn't the default "0" breed, e.g. "Cat", "Dog-1" (see AnimalIconCache.GetPetCacheKey). Either way, pass to `GET /animal-sprite?type=` for this animal's real portrait.</summary>
+        public string Type { get; init; } = "";
+
+        /// <summary>FarmAnimal.friendshipTowardFarmer, or the same-named field on Pet — both 0-1000 (200 points per heart, 5 hearts max; Pet's own `maxFriendship` constant confirms 1000) — the app computes the heart meter from this raw value, same pattern as the Skills screen's raw skill levels.</summary>
+        public int Friendship { get; init; }
+
+        /// <summary>FarmAnimal.wasPet, or Pet.grantedFriendshipForPet for a house pet — both mean the same thing despite the different field name: whether this animal has already been pet (and granted its daily friendship gain) today. Drives the app's "Needs petting" label.</summary>
+        public bool WasPet { get; init; }
     }
 }
