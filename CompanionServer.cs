@@ -375,6 +375,41 @@ namespace StardewDS
                     response.OutputStream.Close();
                 }
             }
+            else if (request.HttpMethod == "GET" && path == "/animal-sprite")
+            {
+                // Real farm-animal AND house-pet (Cat/Dog) breed
+                // portraits, cropped from the game's own loaded animal
+                // textures by AnimalIconCache (see
+                // GameStateSnapshot.Capture/CollectPets, which warm this
+                // cache every tick for whatever's actually on the farm
+                // or in the farmhouse) — not bundled or downloaded by
+                // the app itself. Keyed by breed (`type`), not by
+                // individual animal/pet — see AnimalIconCache's doc
+                // comment for the pet cache-key scheme.
+                string? type = request.QueryString["type"];
+
+                if (string.IsNullOrEmpty(type))
+                {
+                    response.StatusCode = 400;
+                    WriteJson(response, "{\"error\":\"missing ?type= query parameter\"}");
+                    return;
+                }
+
+                byte[]? animalPng = AnimalIconCache.TryGet(type);
+
+                if (animalPng is null)
+                {
+                    response.StatusCode = 404;
+                    WriteJson(response, "{\"error\":\"breed not cached yet\"}");
+                }
+                else
+                {
+                    response.ContentType = "image/png";
+                    response.ContentLength64 = animalPng.Length;
+                    response.OutputStream.Write(animalPng, 0, animalPng.Length);
+                    response.OutputStream.Close();
+                }
+            }
             else if (request.HttpMethod == "GET" && path == "/portrait")
             {
                 // The player's actual composited farmer sprite — see
