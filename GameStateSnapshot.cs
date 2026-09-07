@@ -192,7 +192,7 @@ namespace StardewDS
                 // *before* this snapshot is published — so by the time the
                 // app sees this item in a /state response, GET /sprite for
                 // it is already cached and won't 404.
-                SpriteCache.EnsureCached(item.QualifiedItemId);
+                SpriteCache.EnsureCached(item);
 
                 // Per-item state beyond name/quantity — currently just the
                 // watering can's remaining water, requested explicitly.
@@ -255,7 +255,7 @@ namespace StardewDS
                     Name = item.DisplayName,
                     Quantity = item.Stack,
                     ItemId = item.ItemId,
-                    QualifiedItemId = item.QualifiedItemId,
+                    QualifiedItemId = SpriteCache.CacheKeyFor(item)!, // item is non-null here (checked/continued above)
                     WaterLeft = waterLeft,
                     WaterLeftMax = waterLeftMax,
                     WaterCanIsBottomless = waterCanIsBottomless,
@@ -326,10 +326,10 @@ namespace StardewDS
             Item? leftRing = player.leftRing.Value;
             Item? rightRing = player.rightRing.Value;
             Item? boots = player.boots.Value;
-            SpriteCache.EnsureCached(hat?.QualifiedItemId);
-            SpriteCache.EnsureCached(leftRing?.QualifiedItemId);
-            SpriteCache.EnsureCached(rightRing?.QualifiedItemId);
-            SpriteCache.EnsureCached(boots?.QualifiedItemId);
+            SpriteCache.EnsureCached(hat);
+            SpriteCache.EnsureCached(leftRing);
+            SpriteCache.EnsureCached(rightRing);
+            SpriteCache.EnsureCached(boots);
 
             // Farm animals — coops/barns/pasture, via the same
             // aggregating helper most published SMAPI mods use for
@@ -522,7 +522,16 @@ namespace StardewDS
         /// <summary>Unqualified item id (e.g. "24") — kept for backwards compat, not used for sprite lookup.</summary>
         public string ItemId { get; init; } = "";
 
-        /// <summary>Qualified item id (e.g. "(O)24") — pass this to `GET /sprite?id=` to fetch the item's real icon.</summary>
+        /// <summary>
+        /// Sprite cache key for this slot — pass this to `GET /sprite?id=`
+        /// to fetch the item's real icon. Usually just the qualified item
+        /// id (e.g. "(O)24"), but for a colored preserve/fish product
+        /// (Pickles/Jelly/Wine/Juice/Roe/Aged Roe/Caviar/Dried Fruit/Dried
+        /// Mushrooms) it also carries that specific jar's/fish's color, so
+        /// two stacks of e.g. Jelly made from different fruit get distinct
+        /// keys instead of colliding on the one shared "(O)344" id — see
+        /// <see cref="SpriteCache.CacheKeyFor"/> (issue #9).
+        /// </summary>
         public string QualifiedItemId { get; init; } = "";
 
         /// <summary>Remaining water in a watering can; null for anything else.</summary>
