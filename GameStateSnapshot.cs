@@ -339,7 +339,28 @@ namespace StardewDS
             var animals = new List<AnimalDto>();
             if (Game1.getFarm() is Farm farm)
             {
-                foreach (FarmAnimal animal in farm.getAllFarmAnimals())
+                // farm.getAllFarmAnimals() rebuilds its aggregate
+                // Dictionary<long, FarmAnimal> from scratch on every call —
+                // partly from the pasture's own animal dictionary, partly
+                // from each building's indoor AnimalHouse dictionary — so
+                // its .Values enumeration order tracks *insertion* order
+                // into that fresh dictionary, not any stable in-game
+                // order. An animal that steps outside to the pasture and
+                // back into the barn between two snapshots gets removed
+                // and re-added, which reshuffles where it lands in that
+                // enumeration — this is what made the app's Animals list
+                // visibly reorder itself between polls even though
+                // nothing the player did should have moved anyone in the
+                // list. Sorting by FarmAnimal.myID.Value (the persistent
+                // per-animal id assigned once at birth/purchase and never
+                // reused) fixes the list to a stable order that matches
+                // the order the animals were acquired in, independent of
+                // which building each one happens to be standing in when
+                // a given snapshot is captured.
+                var sortedAnimals = new List<FarmAnimal>(farm.getAllFarmAnimals());
+                sortedAnimals.Sort((a, b) => a.myID.Value.CompareTo(b.myID.Value));
+
+                foreach (FarmAnimal animal in sortedAnimals)
                 {
                     // Cache-warm this breed's portrait crop now, on the
                     // main thread, before this snapshot is published —
