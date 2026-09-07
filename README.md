@@ -107,7 +107,7 @@ What it does once running:
     (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
     render than `/portrait` — reuse `/portrait` for anything that wants
     the full standing body. Same refresh cadence as `/portrait`.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|heart-filled|heart-empty|hand-cursor|scroll-arrow-up|scroll-arrow-down|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet|petting-status-unpet|petting-status-pet|table-divider-h|table-divider-v|animals-tab`
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|heart-filled|heart-empty|hand-cursor|scroll-arrow-up|scroll-arrow-down|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet|care-status-unpet|care-status-pet|table-divider-h|table-divider-v|animals-tab`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
     organize/journal buttons, an item-quality star badge, a Skills
     screen skill icon or level-pip segment, the journal button's
@@ -124,7 +124,7 @@ What it does once running:
     water-level fill — the fill itself is a plain solid-color rect, not
     a sprite, so it rides the snapshot as `waterLeft`/`waterLeftMax`/
     `waterCanIsBottomless` instead, same pattern as `cooldownFraction`
-    below). `hand-cursor` is the Animals table's "needs petting" icon
+    below). `hand-cursor` is the Animals table's "needs care" icon
     (vanilla's own pick-up-item hand cursor, repurposed rather than a
     made-up icon) and `scroll-arrow-up`/`scroll-arrow-down` are the
     Animals table's tap-to-scroll rail — both cropped from
@@ -132,7 +132,7 @@ What it does once running:
     decompiled `StardewValley.Menus.AnimalPage` itself uses for these
     same elements, from an earlier round's community-wiki-table
     guesses — see risk area 9 below.
-    `petting-status-unpet`/`petting-status-pet` are the Animals table's
+    `care-status-unpet`/`care-status-pet` are the Animals table's
     per-row "already pet today" indicator — CORRECTED to a dedicated,
     purpose-built icon on a *different* sheet
     (`Game1.mouseCursors_1_6`, not `Game1.mouseCursors`) that
@@ -182,7 +182,7 @@ What it does once running:
     in-game quest-log button's own pulse). `/state`'s (and `/ws`'s)
     snapshot also reports `animals` — one entry per farm animal
     (`name`, `type` breed string, `friendship` 0-1000, `wasPet`) for the
-    app's Animals screen. Scoped to friendship + petting status only —
+    app's Animals screen. Scoped to friendship + care status only —
     no produce-ready state — matching the real, currently-published
     `AnimalSocialMenu` mod's own scope (see `GameStateSnapshot.
     AnimalDto`'s doc comment for the full reasoning). Defaults to an
@@ -531,8 +531,8 @@ likely each is to have shifted:
    unlike the third correction.
 
    The table's internal grid divider lines (`table-divider-h`/
-   `table-divider-v`) and the per-row petting status glyph (now
-   `petting-status-unpet`/`petting-status-pet` — renamed this round,
+   `table-divider-v`) and the per-row care status glyph (now
+   `care-status-unpet`/`care-status-pet` — renamed this round,
    see below) were added in an earlier round in `UiIconCache.cs`,
    replacing flat colored placeholders. The divider lines used
    `UiIconCache.EnsureCached` calling the real
@@ -608,8 +608,8 @@ likely each is to have shifted:
      this icon *unconditionally*, every row, at full opacity — there's
      no real vanilla dimming/fading based on pet status; only the
      status glyph below it (next bullet) changes.
-   - **petting-status-unpet/petting-status-pet** (renamed from
-     `petting-checkbox-unchecked`/`petting-checkbox-checked`): the
+   - **care-status-unpet/care-status-pet** (renamed from
+     `care-checkbox-unchecked`/`care-checkbox-checked`): the
      `OptionsCheckbox` sprite above was an entirely wrong real sprite,
      not a wrong rect — `drawNPCSlot` reveals the real per-row
      indicator is a dedicated, purpose-built icon on the *newer*

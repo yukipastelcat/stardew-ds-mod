@@ -96,7 +96,7 @@ namespace StardewDS
         public EquipmentDto Equipment { get; init; } = new();
 
         /// <summary>Farm animals on the player's farm — see AnimalDto's
-        /// doc comment for scope (friendship + petting status only, no
+        /// doc comment for scope (friendship + care status only, no
         /// produce state). Defaults to empty for backwards compat with
         /// older mod builds that don't report this yet.</summary>
         public List<AnimalDto> Animals { get; init; } = new();
@@ -333,7 +333,7 @@ namespace StardewDS
             // aggregating helper most published SMAPI mods use for
             // this (Farm.getAllFarmAnimals(), which internally covers
             // animals both inside buildings and out on the pasture).
-            // Scoped to friendship + petting status only — see
+            // Scoped to friendship + care status only — see
             // AnimalDto's doc comment for why produce-ready state isn't
             // reported.
             var animals = new List<AnimalDto>();
@@ -531,7 +531,7 @@ namespace StardewDS
     /// anywhere in the real game's own GameMenu); the closest real
     /// precedent is the well-known AnimalSocialMenu mod
     /// (spacechase0/AnimalSocialMenu), which adds exactly this same
-    /// scope — a friendship/petting list, nothing about produce — so
+    /// scope — a friendship/care list, nothing about produce — so
     /// this DTO matches that rather than guessing at a wider one. A
     /// future round wanting more needs new fields here first (see this
     /// project's README route list).
@@ -546,7 +546,7 @@ namespace StardewDS
         /// <summary>FarmAnimal.friendshipTowardFarmer, or the same-named field on Pet — both 0-1000 (200 points per heart, 5 hearts max; Pet's own `maxFriendship` constant confirms 1000) — the app computes the heart meter from this raw value, same pattern as the Skills screen's raw skill levels.</summary>
         public int Friendship { get; init; }
 
-        /// <summary>FarmAnimal.wasPet, or Pet.grantedFriendshipForPet for a house pet — both mean the same thing despite the different field name: whether this animal has already been pet (and granted its daily friendship gain) today. Drives the app's "Needs petting" label.</summary>
+        /// <summary>FarmAnimal.wasPet, or Pet.grantedFriendshipForPet for a house pet — both mean the same thing despite the different field name: whether this animal has already been pet (and granted its daily friendship gain) today. Drives the app's "Needs care" label.</summary>
         public bool WasPet { get; init; }
     }
 }

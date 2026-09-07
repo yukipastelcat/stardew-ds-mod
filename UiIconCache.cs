@@ -20,7 +20,7 @@ namespace StardewDS
     /// out of the game's own `Cursors` spritesheet
     /// (<see cref="Game1.mouseCursors"/>), the exact same icons the
     /// vanilla game itself draws, plus the Animals screen's own
-    /// 5-heart friendship meter, its real hand-cursor "needs petting"
+    /// 5-heart friendship meter, its real hand-cursor "needs care"
     /// badge, and the two large scrollbar arrows its animal table
     /// reuses from the game's own scrollable-menu chrome.
     ///
@@ -40,7 +40,7 @@ namespace StardewDS
     /// added a real "Animals" page to its own <c>GameMenu</c>, which
     /// turns out to be almost exactly what this app's own Animals
     /// screen is trying to reproduce — a scrollable list of
-    /// portrait+name+friendship-hearts+petting-status rows with a
+    /// portrait+name+friendship-hearts+care-status rows with a
     /// scrollbar down the side. Once found (well after this feature's
     /// first few rounds — see the project README's Animals risk-area
     /// note for the fuller history), it settled several rects here that
@@ -57,7 +57,7 @@ namespace StardewDS
     ///   earlier `(32, 0, 16, 16)` guess (sourced from a community
     ///   Cursors reference, not a decompile): `AnimalPage.drawNPCSlot`
     ///   draws this same icon, at these smaller dimensions, as its own
-    ///   "needs petting" hand — the earlier guess over-cropped 6px into
+    ///   "needs care" hand — the earlier guess over-cropped 6px into
     ///   the neighboring cursor frames on both axes.
     /// - `scroll-arrow-up`/`scroll-arrow-down`
     ///   (`Rectangle(421, 459, 11, 12)`/`Rectangle(421, 472, 11, 12)`) —
@@ -67,7 +67,7 @@ namespace StardewDS
     ///   scroll buttons from exactly these rects — the real Animals-menu
     ///   scrollbar this app's table is modeled after, not a borrowed
     ///   reference from an unrelated menu (e.g. Collections).
-    /// - `petting-status-unpet`/`petting-status-pet` — CORRECTED from a
+    /// - `care-status-unpet`/`care-status-pet` — CORRECTED from a
     ///   wrong guess entirely (a previous round used
     ///   <c>StardewValley.Menus.OptionsCheckbox</c>'s real checkbox
     ///   sprite off <see cref="Game1.mouseCursors"/> for this, on the
@@ -165,7 +165,7 @@ namespace StardewDS
             ["heart-empty"] = new Rectangle(218, 428, 7, 6),
 
             // Animals screen — the real vanilla "picking up an item"
-            // hand cursor, repurposed as the per-row "needs petting"
+            // hand cursor, repurposed as the per-row "needs care"
             // badge, and the two large scrollbar arrows its table
             // reuses from vanilla's own scrollable-menu chrome. See
             // this class's own doc comment for where these rects came
@@ -174,7 +174,7 @@ namespace StardewDS
             // real StardewValley.Menus.AnimalPage (vanilla 1.6's own
             // Animals menu page, which this whole feature turns out to
             // parallel closely) draws this exact same icon for its own
-            // "needs petting" hand: an earlier guess used (32,0,16,16)
+            // "needs care" hand: an earlier guess used (32,0,16,16)
             // instead, over-cropping 6px into the neighboring cursor
             // frames on both axes.
             ["hand-cursor"] = new Rectangle(32, 0, 10, 10),
@@ -288,7 +288,7 @@ namespace StardewDS
         // instead of finding this. Same one-tile, no-compositing
         // technique as every other tab icon in this file.
         //
-        // The Animals table's own per-row petting-status glyph also lives
+        // The Animals table's own per-row care-status glyph also lives
         // here now — CORRECTED after it turned out the real vanilla
         // AnimalPage doesn't use OptionsCheckbox's checkbox for this at
         // all (a previous, wrong guess): its own drawNPCSlot draws
@@ -301,13 +301,13 @@ namespace StardewDS
         private static readonly Dictionary<string, Rectangle> SourceRects16 = new()
         {
             ["animals-tab"] = new Rectangle(257, 246, 16, 16),
-            ["petting-status-unpet"] = new Rectangle(273, 253, 9, 9),
-            ["petting-status-pet"] = new Rectangle(291, 253, 9, 9),
+            ["care-status-unpet"] = new Rectangle(273, 253, 9, 9),
+            ["care-status-pet"] = new Rectangle(291, 253, 9, 9),
         };
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "petting-status-unpet"/"petting-status-pet", "table-divider-h"/"table-divider-v", "animals-tab"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "care-status-unpet"/"care-status-pet", "table-divider-h"/"table-divider-v", "animals-tab"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 
