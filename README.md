@@ -653,6 +653,55 @@ likely each is to have shifted:
    checked, but a modded location that relocates a pet somewhere else
    entirely wouldn't be covered.
 
+   A sixth round tackled a real bug report: the app's Animals list was
+   visibly reordering itself between polls with no player action to
+   explain it. Root cause was `Farm.getAllFarmAnimals()` — it rebuilds
+   its aggregate `Dictionary<long, FarmAnimal>` from scratch on every
+   call (pasture animals plus each building's indoor animals merged
+   together), so its `.Values` enumeration order tracked *insertion*
+   order into that fresh dictionary rather than anything stable; an
+   animal moving between the pasture and a building between two polls
+   got removed and re-added, reshuffling where it landed. A first pass
+   fixed this by sorting on `FarmAnimal.myID.Value` (a persistent,
+   never-reused per-animal id) — stable, but an arbitrary order with no
+   relationship to what the real game shows.
+
+   The follow-up ask was to match the *real* in-game order, not just
+   pick a stable one. Every public decompile mirror tried for this
+   project's earlier `AnimalPage`/`drawNPCSlot` research (Dannode36's,
+   veywrn's) turned out not to actually contain `AnimalPage.cs` at the
+   paths their own commit history implies — consistent 404s regardless
+   of the folder-nesting guess. Rather than keep guessing mirrors, this
+   round read the type straight out of this project's own
+   `vendor/lib/Stardew Valley.dll` (the real, exact game build this mod
+   compiles against) via a from-scratch ECMA-335 metadata/IL reader
+   (no `ilspycmd`/`dotnet` available in the environment that did this),
+   locating `StardewValley.Menus.AnimalPage` and disassembling its
+   `FindAnimals`/`GetAllAnimals` methods and their three
+   compiler-generated sort-lambda methods directly.
+
+   That IL settles the real order authoritatively: `FindAnimals` builds
+   three buckets while walking `GetAllAnimals()` — pets (`is Pet`),
+   horses (`is Horse`), and everything else (regular farm animals) —
+   then returns `pets.AddRange + horses.AddRange +`
+   `farmAnimals.OrderBy(a => a.AnimalBaseType)`
+     `.ThenBy(a => a.AnimalType)`
+     `.ThenByDescending(a => a.FriendshipLevel)`, where `AnimalType` is
+   the raw `FarmAnimal.type.Value` breed+species string (e.g. "White
+   Chicken") and `AnimalBaseType` is `type.Contains(' ') ?`
+   `type.Split(' ')[1] : type` — the species with any color/breed
+   prefix stripped (e.g. "Chicken"), read directly out of the
+   `<FindAnimals>b__14_0`/`b__14_1`/`b__14_2` lambda bodies. So the real
+   menu groups by species first, sub-sorts by the full breed string
+   within a species, and breaks remaining ties by *highest* friendship
+   first — not by acquisition order, name, or anything id-based.
+   `GameStateSnapshot.Capture` now replicates this: pets first (already
+   collected separately via `CollectPets`, just reordered to the front
+   instead of the back), then farm animals sorted by the same three
+   keys via `AnimalBaseType`/`type.Value`/`friendshipTowardFarmer.Value`.
+   Horses aren't reproduced since this app doesn't track them at all.
+
+
    A later round fixed how the companion app *renders* the
    `table-divider-h`/`table-divider-v` crops (app-side, `_HorizontalRule`/
    `_VerticalRule` in `animals_screen.dart`) rather than what's cropped:

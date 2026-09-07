@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -337,28 +339,56 @@ namespace StardewDS
             // AnimalDto's doc comment for why produce-ready state isn't
             // reported.
             var animals = new List<AnimalDto>();
+
+            // House pets (Cat/Dog) go first in the returned list, ahead
+            // of farm animals — matching real vanilla order (see the
+            // sort note below). They're collected up front here so
+            // `animals.AddRange(pets)` can run before the farm-animal
+            // loop, same relative order AnimalPage.FindAnimals itself
+            // builds its list in (pets, then horses [not tracked by
+            // this app], then the sorted farm animals).
+            var pets = new List<AnimalDto>();
+            if (Game1.getFarm() is Farm petFarm)
+                CollectPets(petFarm, pets);
+            if (Utility.getHomeOfFarmer(player) is { } petHome)
+                CollectPets(petHome, pets);
+            animals.AddRange(pets);
+
             if (Game1.getFarm() is Farm farm)
             {
                 // farm.getAllFarmAnimals() rebuilds its aggregate
-                // Dictionary<long, FarmAnimal> from scratch on every call —
-                // partly from the pasture's own animal dictionary, partly
-                // from each building's indoor AnimalHouse dictionary — so
-                // its .Values enumeration order tracks *insertion* order
-                // into that fresh dictionary, not any stable in-game
-                // order. An animal that steps outside to the pasture and
-                // back into the barn between two snapshots gets removed
-                // and re-added, which reshuffles where it lands in that
-                // enumeration — this is what made the app's Animals list
-                // visibly reorder itself between polls even though
-                // nothing the player did should have moved anyone in the
-                // list. Sorting by FarmAnimal.myID.Value (the persistent
-                // per-animal id assigned once at birth/purchase and never
-                // reused) fixes the list to a stable order that matches
-                // the order the animals were acquired in, independent of
-                // which building each one happens to be standing in when
-                // a given snapshot is captured.
-                var sortedAnimals = new List<FarmAnimal>(farm.getAllFarmAnimals());
-                sortedAnimals.Sort((a, b) => a.myID.Value.CompareTo(b.myID.Value));
+                // Dictionary<long, FarmAnimal> from scratch on every
+                // call, so its raw enumeration order isn't stable
+                // between polls (an animal moving between the pasture
+                // and a building reshuffles it) and never matched real
+                // vanilla order to begin with — this was visibly
+                // reshuffling the app's Animals list between snapshots
+                // even when the player hadn't done anything.
+                //
+                // Fixed by sorting exactly the way vanilla's own
+                // "Animals" GameMenu page does: decompiled straight out
+                // of this project's own `Stardew Valley.dll`
+                // (StardewValley.Menus.AnimalPage.FindAnimals), its
+                // compiler-generated sort key is
+                //   .OrderBy(a => a.AnimalBaseType)
+                //   .ThenBy(a => a.AnimalType)
+                //   .ThenByDescending(a => a.FriendshipLevel)
+                // where AnimalType is the raw breed+species string
+                // (FarmAnimal.type.Value, e.g. "White Chicken") and
+                // AnimalBaseType strips any color/breed prefix — the
+                // part after the first space (e.g. "Chicken"), or the
+                // whole string when there's no space (e.g. "Duck").
+                // Matching this exactly (not just picking *some* stable
+                // order, like an earlier round of this fix did with
+                // myID) is what makes the app's list match the real
+                // in-game menu's row order, species-grouped and
+                // friendship-ranked within a species/breed, not merely
+                // stop reshuffling.
+                var sortedAnimals = new List<FarmAnimal>(farm.getAllFarmAnimals())
+                    .OrderBy(AnimalBaseType, System.StringComparer.Ordinal)
+                    .ThenBy(a => a.type.Value, System.StringComparer.Ordinal)
+                    .ThenByDescending(a => a.friendshipTowardFarmer.Value)
+                    .ToList();
 
                 foreach (FarmAnimal animal in sortedAnimals)
                 {
@@ -376,30 +406,8 @@ namespace StardewDS
                         WasPet = animal.wasPet.Value,
                     });
                 }
-
-                // House pets (Cat/Dog) — a StardewValley.Characters.Pet
-                // is NOT a FarmAnimal (it's an NPC subclass), so the
-                // farm-animal loop above never sees it; this is why an
-                // earlier round of this snapshot silently dropped the
-                // player's cat/dog from the Animals list entirely. A
-                // Pet instead lives in a GameLocation's own
-                // `characters` collection — confirmed via decompiled
-                // 1.5.6 source: Farm.cs's own animal-interaction code
-                // checks `this.characters[index] is Pet`, so the farm
-                // itself is one place to look (see this project's
-                // README "Known risk areas" for the exact source
-                // cited).
-                CollectPets(farm, animals);
             }
 
-            // A pet can also be asleep indoors rather than out on the
-            // farm — Pet.cs's own `warpToFarmHouse` moves a sleeping
-            // pet into `Utility.getHomeOfFarmer(who)`'s `characters`
-            // list (same decompiled source cited above), so the
-            // farmhouse is checked too, independent of whether
-            // Game1.getFarm() resolved above.
-            if (Utility.getHomeOfFarmer(player) is { } home)
-                CollectPets(home, animals);
 
             return new GameStateSnapshot
             {
@@ -473,6 +481,13 @@ namespace StardewDS
         /// GameLocation's `characters` list (not
         /// Farm.getAllFarmAnimals()) is how pets are found at all.
         /// </summary>
+
+        /// <summary>The species-without-color/breed part of a farm animal's <see cref="FarmAnimal.type"/> string (e.g. "White Chicken" -> "Chicken", "Duck" -> "Duck" unchanged) — vanilla's own <c>AnimalPage.FindAnimals</c> uses exactly this as the primary sort key for the real "Animals" GameMenu page (decompiled straight from this project's own <c>Stardew Valley.dll</c>: <c>type.Contains(' ') ? type.Split(' ')[1] : type</c>), which is why <see cref="Capture"/> sorts farm animals by this first too, to match that menu's row order.</summary>
+        private static string AnimalBaseType(FarmAnimal animal)
+        {
+            string type = animal.type.Value;
+            return type.Contains(' ') ? type.Split(' ')[1] : type;
+        }
         private static void CollectPets(GameLocation location, List<AnimalDto> animals)
         {
             foreach (NPC character in location.characters)
