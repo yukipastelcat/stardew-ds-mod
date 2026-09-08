@@ -333,7 +333,16 @@ likely each is to have shifted:
    API (the documented modern replacement for indexing the old hardcoded
    spritesheets by hand); confirmed working against a real build (icons
    render correctly). `Game1.graphics.GraphicsDevice` was the one guess in
-   here and it held up.
+   here and it held up. Colored preserves/fish products (Pickles, Jelly,
+   Wine, Juice, Roe, Aged Roe, Caviar, Dried Fruit, Dried Mushrooms) were
+   still wrong until issue #9's fix (they crashed nothing, they just
+   cropped as the plain uncolored base sprite, since a `ColoredObject`'s
+   actual color lives on the item instance, not in the shared
+   `ParsedItemData`) — the two-layer tint composite in
+   `RenderColoredObject` reproduces vanilla `ColoredObject.drawInMenu`'s
+   own base+overlay draw, checked against decompiled 1.6 source, but
+   like the rest of this file it hasn't been through a real `dotnet build`
+   in this sandbox.
 3. `PortraitRenderer.cs` / `UiIconCache.cs` — the newest, least-verified
    pieces. The farmer-portrait draw call in `PortraitRenderer.cs` and the
    Cursors-sheet rects in `UiIconCache.cs` were both copied from the

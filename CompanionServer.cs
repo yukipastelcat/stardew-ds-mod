@@ -350,7 +350,11 @@ namespace StardewDS
                 // game textures by SpriteCache (see GameStateSnapshot.Capture,
                 // which warms this cache every tick for whatever's actually
                 // in the inventory/equipped) — not bundled or downloaded by
-                // the app itself.
+                // the app itself. `id` is whatever SpriteCache.CacheKeyFor
+                // produced for that slot — usually a plain qualified item id,
+                // but a colored preserve/fish product (Jelly, Wine, Roe, ...)
+                // carries a "@<color>" suffix too, so different flavors of
+                // the same shared item id don't collide on one cached icon.
                 string? id = request.QueryString["id"];
 
                 if (string.IsNullOrEmpty(id))
