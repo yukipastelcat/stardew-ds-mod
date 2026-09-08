@@ -48,6 +48,26 @@ What it does once running:
   menu calls after you check "Hardware Cursor"), which is why an earlier
   version of this fix (setting the option without calling that method)
   didn't actually make the cursor appear.
+- Takes the backpack's vanilla "rows of 12" behaviour out of the game
+  entirely, so the slot the app highlights and the slot the game has
+  equipped can never disagree (`InventoryNavigationPatches.cs` +
+  `ModEntry.OnButtonPressed`). Vanilla splits the backpack into pages of
+  twelve: the shift-toolbar button (shoulder buttons on a gamepad, "R" on
+  the handheld) calls `Farmer.shiftToolbar`, which physically *rotates*
+  `Farmer.Items` by twelve so a different twelve items sit in the hotbar,
+  and the trigger buttons step the selection with a `% 12` wrap. Neither
+  suits the app, which draws all `MaxItems` slots at once and lets you tap
+  any of them: the rotation makes every item in the app's grid appear to
+  jump to a different slot, and a trigger press after tapping (say) slot 20
+  snaps the selection back into slots 0-11. So `Farmer.shiftToolbar` is
+  Harmony-prefixed to do nothing at all, and the triggers are suppressed
+  via SMAPI (`IInputHelper.Suppress`) and re-implemented to step through
+  the whole backpack with wraparound. The shoulder buttons are inert
+  during gameplay as a result — with every slot one tap away in the app
+  and the triggers covering all of them, there's nothing left for a "next
+  12 slots" action to do. The triggers are only taken over while
+  `Context.IsPlayerFree`, so their menu use (paging between
+  inventory/crafting tabs) is untouched.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -369,6 +389,22 @@ likely each is to have shifted:
    `UiIconCache` `vitals-*` rects and the `Rectangle(366, 412, 5, 6)`
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
+4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
+   backpack-navigation rework. Three things here are worth checking on a
+   real run rather than a build:
+   - `Farmer.shiftToolbar(bool)` is targeted by `nameof`, so a rename
+     breaks the *build* rather than silently restoring row rotation —
+     that's the intended failure mode, not a bug.
+   - Trigger suppression relies on SMAPI honouring
+     `IInputHelper.Suppress` for the analog triggers. If it ever doesn't,
+     vanilla's own hotbar-only wrap would run right after ours;
+     `ModEntry.ReassertCycledSlot` re-applies our index on the same
+     tick's `UpdateTicked` specifically so that degrades to a no-op
+     instead of a visible regression.
+   - The `"toolSwap"` cue name passed to `Game1.playSound` on each step
+     is the one vanilla uses for tool switching; if it's wrong you'd get
+     a silent (or logged-error) swap, not a crash.
+
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
    against the real decompiled source (`InventoryPage.draw` for the
@@ -768,6 +804,7 @@ row when absent) in case this needs reverting on an older save format.
 - `AnimalIconCache.cs` — crops real farm-animal AND house-pet (Cat/Dog) breed portraits, keyed by type
 - `ClockCache.cs` — crops the clock/day box backdrop and its sundial needle
 - `HudPatches.cs` — Harmony patch that skips drawing the toolbar
+- `InventoryNavigationPatches.cs` — Harmony patch that disables vanilla's toolbar-row rotation
 - `manifest.json` — SMAPI mod manifest
 - `StardewDS.csproj` — project file (net6.0, references ModBuildConfig + Lib.Harmony)
 

@@ -24,6 +24,9 @@ namespace StardewDS
         private bool _pendingOrganize;
         private bool _pendingOpenJournal;
 
+        /// <summary>The slot <see cref="OnButtonPressed"/> just cycled to with the trigger buttons, re-asserted once on the following <see cref="OnUpdateTicked"/>. See <see cref="ReassertCycledSlot"/> for why this needs re-asserting at all. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one is only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
+        private int? _cycledSlot;
+
         /*********
         ** Public methods
         *********/
@@ -38,6 +41,7 @@ namespace StardewDS
 
             this._server = new CompanionServer(this.Monitor, Port, this.OnSelectRequested, this.OnMoveRequested, this.OnOrganizeRequested, this.OnOpenJournalRequested);
 
+            helper.Events.Input.ButtonPressed += this.OnButtonPressed;
             helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
             helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
@@ -57,7 +61,7 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the trigger buttons just cycled to (see <see cref="ReassertCycledSlot"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
@@ -135,6 +139,10 @@ namespace StardewDS
                         Game1.uiOverlayTempSprites.RemoveAt(i);
                 }
 
+                // Before ApplyPendingSelection, deliberately: if the
+                // player cycled with a trigger and tapped a slot in the
+                // app on the same tick, the explicit tap should win.
+                this.ReassertCycledSlot();
                 this.ApplyPendingSelection();
                 this.ApplyPendingMove();
                 this.ApplyPendingOrganize();
@@ -144,10 +152,93 @@ namespace StardewDS
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
         }
 
-        /// <summary>Raised after the player returns to the title screen — clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
+        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted trigger cycle (see <see cref="ReassertCycledSlot"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
+            this._cycledSlot = null;
             this._server?.UpdateSnapshot(null);
+        }
+
+
+        /// <summary>Raised when any button is pressed — takes over the two trigger buttons (L2/R2 on the handheld this mod targets) so they step the selected slot through the player's entire backpack instead of wrapping inside the first twelve slots.</summary>
+        /// <remarks>
+        /// Vanilla's trigger handling lives inline in the game's own input
+        /// update and only ever moves within the twelve hotbar slots (the
+        /// other rows are meant to be reached by shifting the toolbar,
+        /// which <see cref="InventoryNavigationPatches"/> now disables). The
+        /// app, though, shows all <c>MaxItems</c> slots at once and lets you
+        /// tap any of them — so after tapping, say, slot 20, one trigger
+        /// press would snap the selection back into slots 0-11 and the two
+        /// cursors would disagree. Suppressing the button and doing the
+        /// step here keeps them in lockstep.
+        ///
+        /// Suppressing rather than patching is deliberate: it works
+        /// regardless of which method the game routes the triggers through
+        /// (they've moved between game versions), and it can't fail the way
+        /// a patch on a renamed method would.
+        ///
+        /// Only during normal gameplay (<see cref="Context.IsPlayerFree"/>).
+        /// In menus the triggers page between inventory/crafting tabs, which
+        /// this must not eat.
+        /// </remarks>
+        private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
+        {
+            if (!Context.IsPlayerFree)
+                return;
+
+            int direction = e.Button switch
+            {
+                SButton.RightTrigger => 1,
+                SButton.LeftTrigger => -1,
+                _ => 0
+            };
+            if (direction == 0)
+                return;
+
+            this.Helper.Input.Suppress(e.Button);
+            this.CycleSelectedSlot(direction);
+        }
+
+        /// <summary>Steps the selected slot <paramref name="direction"/> places through the player's unlocked backpack, wrapping at both ends. The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked. Empty slots are stepped onto rather than skipped, matching what vanilla's own trigger swap does within the hotbar.</summary>
+        private void CycleSelectedSlot(int direction)
+        {
+            Farmer? player = Game1.player;
+            if (player is null)
+                return;
+
+            int capacity = player.MaxItems;
+            if (capacity <= 0)
+                return;
+
+            int next = ((player.CurrentToolIndex + direction) % capacity + capacity) % capacity;
+            if (next == player.CurrentToolIndex)
+                return;
+
+            player.CurrentToolIndex = next;
+            this._cycledSlot = next;
+            Game1.playSound("toolSwap");
+        }
+
+        /// <summary>Re-applies the slot the last trigger press cycled to, once, on the update tick that follows it.</summary>
+        /// <remarks>
+        /// Belt-and-suspenders, in the same spirit as the
+        /// <c>Game1.onScreenMenus</c> filtering above. <see cref="OnButtonPressed"/>
+        /// suppresses the trigger before the game's own input update runs,
+        /// which should mean the game never sees it — but if a future SMAPI
+        /// or game version stops honouring suppression for the analog
+        /// triggers specifically, vanilla would run its own hotbar-only
+        /// wrap immediately after ours and quietly undo it. Re-asserting
+        /// costs one integer compare per tick and makes that failure mode a
+        /// no-op instead of a regression. When suppression works normally
+        /// the index already matches and this changes nothing.
+        /// </remarks>
+        private void ReassertCycledSlot()
+        {
+            int? slot = this._cycledSlot;
+            this._cycledSlot = null;
+
+            if (slot is int index && Game1.player is Farmer player && index >= 0 && index < player.MaxItems)
+                player.CurrentToolIndex = index;
         }
 
 
