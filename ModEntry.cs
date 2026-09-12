@@ -334,7 +334,7 @@ namespace StardewDS
             this.RequestCycle(delta, playSwapSound);
         }
 
-        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="SyncAuthoritativeToolIndex"/> to actually apply (and keep re-applying forever — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked.</summary>
+        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends (and skipping a trailing run of empty slots on a forward step — see the remarks below), for <see cref="SyncAuthoritativeToolIndex"/> to actually apply (and keep re-applying forever — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked.</summary>
         /// <remarks>
         /// This does NOT set <see cref="Farmer.CurrentToolIndex"/> directly
         /// — an early version of this file did, immediately, from inside
@@ -367,6 +367,14 @@ namespace StardewDS
         /// vanilla-clobbered live <c>CurrentToolIndex</c> — which, for
         /// triggers, could hold vanilla's just-written capped value rather
         /// than ours if read directly).
+        ///
+        /// Forward steps (<paramref name="delta"/> &gt; 0) additionally
+        /// skip a trailing run of empty slots: if <c>next</c> and every
+        /// slot after it are unoccupied, there's nothing useful left to
+        /// step through between here and the end of the backpack, so this
+        /// jumps straight back to slot 0 instead of making the player
+        /// click through each empty slot individually — see
+        /// <see cref="IsBackpackTailEmpty"/>.
         /// </remarks>
         private void RequestCycle(int delta, bool playSwapSound)
         {
@@ -381,6 +389,15 @@ namespace StardewDS
             int baseIndex = this._desiredToolIndex ?? player.CurrentToolIndex;
             int next = ((baseIndex + delta) % capacity + capacity) % capacity;
 
+            if (delta > 0 && IsBackpackTailEmpty(player, next, capacity))
+            {
+                this.Monitor.Log(
+                    $"[Nav] press #{this._debugAcceptedPressCount} RequestCycle: slots {next}..{capacity - 1} are all empty, skipping to slot 0 instead.",
+                    LogLevel.Debug
+                );
+                next = 0;
+            }
+
             this.Monitor.Log(
                 $"[Nav] press #{this._debugAcceptedPressCount} RequestCycle: baseIndex={baseIndex} (from {(this._desiredToolIndex is int ? "authoritative" : "live CurrentToolIndex")}) delta={delta} capacity={capacity} -> next={next}.",
                 LogLevel.Debug
@@ -393,6 +410,17 @@ namespace StardewDS
             // triggers, since it still processes them itself.
             if (playSwapSound)
                 Game1.playSound("toolSwap");
+        }
+
+        /// <summary>Whether every slot from <paramref name="from"/> (inclusive) to the end of the backpack is unoccupied — used by <see cref="RequestCycle"/> to skip a trailing run of empty slots on a forward step. A slot at or beyond <c>player.Items.Count</c> counts as empty too (see <c>ApplyPendingMove</c>'s own doc comment for why <c>Items.Count</c> only covers slots that have actually held an item, not the player's full unlocked capacity).</summary>
+        private static bool IsBackpackTailEmpty(Farmer player, int from, int capacity)
+        {
+            for (int i = from; i < capacity; i++)
+            {
+                if (i < player.Items.Count && player.Items[i] is not null)
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>Keeps <see cref="Farmer.CurrentToolIndex"/> permanently pinned to <see cref="_desiredToolIndex"/> — called every tick, indefinitely, not just for a few ticks after a trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for the real-device evidence that a bounded window doesn't work: vanilla's `%12` trigger step reacts to whatever's in the field on whatever press next comes along, no matter how long that is after this mod's last correction, so the only reliable fix is to never stop correcting.</summary>

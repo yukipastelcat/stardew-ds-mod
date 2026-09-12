@@ -86,6 +86,15 @@ What it does once running:
   number-key press or mouse-wheel scroll on desktop, so either of those
   would also get silently overridden back to whatever the mod last set.
   A real limitation, not a currently-observed bug.
+- Skips trailing empty slots when stepping forward through the backpack
+  (`ModEntry.RequestCycle`/`IsBackpackTailEmpty`): if the slot a forward
+  trigger/shoulder step would land on, and every slot after it, are all
+  unoccupied, the step jumps straight back to slot 0 instead of making
+  the player click through each empty slot one at a time to get back to
+  their items. Forward steps only (a negative `delta` — stepping
+  backward — isn't affected); a slot at or beyond
+  `player.Items.Count` counts as empty the same way the rest of this mod
+  already treats it (see `ApplyPendingMove`'s own doc comment).
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
