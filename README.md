@@ -55,21 +55,23 @@ What it does once running:
   twelve: the shift-toolbar button (shoulder buttons on a gamepad, "R" on
   the handheld) calls `Farmer.shiftToolbar`, which physically *rotates*
   `Farmer.Items` by twelve so a different twelve items sit in the hotbar,
-  and the trigger buttons step the selection with a `% 12` wrap. Neither
-  suits the app, which draws all `MaxItems` slots at once and lets you tap
-  any of them: the rotation makes every item in the app's grid appear to
-  jump to a different slot, and a trigger press after tapping (say) slot 20
-  snaps the selection back into slots 0-11.
-  So all four of the trigger and shoulder buttons are suppressed via SMAPI
-  (`IInputHelper.Suppress`) and reimplemented as index-only steps across
-  the whole backpack — triggers by 1, shoulders by 12 (a "page" jump, no
-  item rotation, so the shoulder buttons stay useful instead of going idle)
-  — plus `Farmer.shiftToolbar` is Harmony-prefixed to a no-op as a second
-  line of defense (see "Known risk areas" **4b** for why one line wasn't
-  enough on a real device, and why the trigger step is applied through a
-  short reassert window rather than once). Only while `Context.IsPlayerFree`,
-  so these buttons' menu use (paging between inventory/crafting tabs) is
-  untouched.
+  and the trigger buttons step the selection by one within that same
+  twelve. The rotation is the one that actively fights the app (every item
+  in its grid appears to jump to a different slot while the selection
+  stays put), so `Farmer.shiftToolbar` is patched out entirely — and since
+  the shoulder buttons then have nothing left to do, they're suppressed
+  via SMAPI and repurposed as a ±12 index jump instead of going idle (see
+  "Known risk areas" **4b** for why that patch needed a second real-device
+  round to actually take, via imperative `harmony.Patch(...)` rather than
+  attribute scanning).
+  The trigger buttons are deliberately left alone — three real-device
+  rounds trying to intercept/reimplement them (suppress + reimplement,
+  then a reassert window, then a debounce) kept finding the trigger step
+  was already correct on its own, and each "fix" was actually this mod's
+  own code stacking an extra step on top of vanilla's un-suppressed one;
+  debug logging that watches `Farmer.CurrentToolIndex` independent of
+  anything this mod does confirmed it directly (see **4b** again). So
+  triggers get zero special handling now — vanilla owns them completely.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -392,11 +394,10 @@ likely each is to have shifted:
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
 4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
-   backpack-navigation rework, revised twice already after real-device
-   tests (both 2026-09-12) surfaced three problems in turn:
-   - **Rows stayed active** (1st test). Root cause turned out to need a
-     *second* test to pin down: a follow-up SMAPI log showed
-     `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
+   backpack-navigation rework, revised across three real-device tests
+   (all 2026-09-12):
+   - **Rows stayed active** (1st test). A follow-up SMAPI log pinned this
+     down: `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
      DOES find the method — the signature was right all along — but
      `harmony.GetPatchedMethods()` didn't include it after
      `harmony.PatchAll(Assembly.GetExecutingAssembly())`; the
@@ -405,41 +406,47 @@ likely each is to have shifted:
      the mod applied fine per the same log). Fixed by patching it
      imperatively instead — `InventoryNavigationPatches.Apply` calls
      `harmony.Patch(...)` directly from `ModEntry.Entry`, in its own
-     try/catch, logging either success or the real exception rather than
-     leaving PatchAll's internals a mystery. Independently,
+     try/catch, logging either success or the real exception — confirmed
+     working in the 3rd test's log (`"Farmer.shiftToolbar(bool) patched
+     OK"`, and the prefix itself logs each time it's actually invoked).
      `ModEntry.OnButtonPressed` also suppresses the shoulder buttons
-     directly (repurposed as a ±12 index jump) as a second line of
-     defense that doesn't depend on the Harmony patch at all.
-   - **Triggers moved the selection by two slots on every press** (1st
-     test fix). SMAPI's `IInputHelper.Suppress` is unreliable for analog
-     triggers specifically — the base game can read the raw controller
-     state directly, bypassing the layer that only intercepts SMAPI's own
-     input APIs — so vanilla's own hotbar-only step could still land in
-     the same tick as this mod's, on top of it. Fixed by no longer setting
-     `CurrentToolIndex` immediately from the button-press handler at all;
-     `ModEntry.RequestCycle` only records the intended index, and
-     `ModEntry.ReassertDesiredToolIndex` forces it back onto
-     `CurrentToolIndex` once a tick for a few ticks after each press
-     (`ReassertTicks`), so the end state after that window is correct
-     regardless of whether vanilla reacted zero, one, or two times to the
-     same press.
-   - **Triggers occasionally skipped one slot** (2nd test, after the fix
-     above shipped): most presses moved cleanly by one, but a capture
-     showed a couple of presses jumping by two. Frame-by-frame analysis of
-     the capture's selection-box position traced it to `OnButtonPressed`
-     itself firing twice for one physical squeeze — a documented
-     characteristic of thresholding a continuous analog trigger value into
-     a digital press/release — which `RequestCycle`'s "stack onto whatever
-     index is already pending" design (needed so genuinely rapid presses
-     add up correctly) then read as two real presses. Fixed with a
-     debounce (`_lastAcceptedPressTick`, `DebounceTicks`): a press landing
-     within 4 ticks (~65ms) of the last one actually accepted is dropped —
-     well above where the jitter landed in the capture, well below any
-     human's fastest deliberate repeat press.
-   - The `"toolSwap"` cue name passed to `Game1.playSound` on each step
-     is the one vanilla uses for tool switching; if it's wrong you'd get
-     a silent (or logged-error) swap, not a crash. Unconfirmed either way
-     by either test.
+     directly (repurposed as a ±12 index jump) as a second, independent
+     line of defense.
+   - **Triggers moved the selection by two slots on every press, then
+     occasionally by two after a first fix** (1st and 2nd tests). Chased
+     across two rounds — a reassert window instead of an immediate
+     `CurrentToolIndex` set, then a debounce on top of that — before a
+     3rd-test SMAPI log settled what was actually going on. That log's
+     debounce had its own bug (see below) that rejected every single
+     trigger press that session, so `RequestCycle` never ran at all — and
+     `CurrentToolIndex` still advanced by exactly one per press anyway.
+     That's direct proof `IInputHelper.Suppress` has **zero** effect on
+     the trigger buttons on this platform (not "unreliable" — vanilla's
+     own handling was 100% in control throughout), and that vanilla's own
+     single-step trigger logic was already correct. The double-jumps and
+     skips in the first two tests were this mod's own step landing on top
+     of vanilla's the whole time, not vanilla misbehaving. Fixed by
+     removing all trigger handling from `OnButtonPressed` — the triggers
+     aren't suppressed, and `RequestCycle` is never called for them; they
+     go straight to vanilla, unmodified. What debug logging watching
+     `Farmer.CurrentToolIndex` independent of any of this (`ModEntry.DebugLogToolIndexChanges`)
+     shows next is the next thing to check — specifically, whether
+     vanilla's own step still wraps at slot 11 (its old hotbar-only
+     boundary) instead of continuing into the rest of the backpack now
+     that row rotation is disabled.
+   - The debounce bug the 3rd test's log exposed: `_lastAcceptedPressTick`
+     started at `int.MinValue`, and `Game1.ticks - int.MinValue` overflows
+     (the true result exceeds `int.MaxValue`), wrapping to a huge negative
+     number that's always less than the debounce window — silently
+     rejecting every press forever. Fixed by making the field nullable
+     (`int?`) and skipping the subtraction entirely before the first
+     accepted press, rather than using an `int` sentinel value at all.
+     Since triggers no longer use this debounce, only shoulder-button
+     presses go through it now.
+   - The `"toolSwap"` cue name passed to `Game1.playSound` on each
+     shoulder-button step is the one vanilla uses for tool switching; if
+     it's wrong you'd get a silent (or logged-error) swap, not a crash.
+     Unconfirmed either way so far.
 
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written

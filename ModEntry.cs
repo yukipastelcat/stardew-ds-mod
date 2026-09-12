@@ -24,19 +24,19 @@ namespace StardewDS
         private bool _pendingOrganize;
         private bool _pendingOpenJournal;
 
-        /// <summary>How many further <see cref="OnUpdateTicked"/> calls will keep re-applying <see cref="_desiredToolIndex"/> after a trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for why one shot isn't enough. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one and <see cref="_desiredToolIndex"/> are only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
+        /// <summary>How many further <see cref="OnUpdateTicked"/> calls will keep re-applying <see cref="_desiredToolIndex"/> after a shoulder-button press. See <see cref="RequestCycle"/>'s doc comment for why one shot isn't enough. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one and <see cref="_desiredToolIndex"/> are only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
         private int _reassertTicksRemaining;
 
-        /// <summary>The slot index <see cref="RequestCycle"/> last computed from a trigger/shoulder press, re-applied every tick while <see cref="_reassertTicksRemaining"/> is still positive. <see langword="null"/> once that window has elapsed (or been cancelled by a fresher app-originated selection — see <see cref="OnUpdateTicked"/>).</summary>
+        /// <summary>The slot index <see cref="RequestCycle"/> last computed from a shoulder-button press, re-applied every tick while <see cref="_reassertTicksRemaining"/> is still positive. <see langword="null"/> once that window has elapsed (or been cancelled by a fresher app-originated selection — see <see cref="OnUpdateTicked"/>). The trigger buttons don't go through this any more — see <see cref="OnButtonPressed"/>'s remarks.</summary>
         private int? _desiredToolIndex;
 
-        /// <summary>How many ticks (~<c>1000/60</c>ms apiece) to keep re-applying <see cref="_desiredToolIndex"/> after each trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for what this is guarding against; 3 is a handful of frames — long enough to win against a same-press vanilla reaction landing a tick or two late, short enough that it never fights a later, legitimate change (an app tap, a different button) for more than an eyeblink.</summary>
+        /// <summary>How many ticks (~<c>1000/60</c>ms apiece) to keep re-applying <see cref="_desiredToolIndex"/> after each shoulder-button press. See <see cref="RequestCycle"/>'s doc comment for what this is guarding against; 3 is a handful of frames — long enough to win against a same-press vanilla reaction landing a tick or two late, short enough that it never fights a later, legitimate change (an app tap, a different button) for more than an eyeblink.</summary>
         private const int ReassertTicks = 3;
 
-        /// <summary><see cref="Game1.ticks"/> value at the last trigger/shoulder press <see cref="OnButtonPressed"/> actually accepted. See <see cref="DebounceTicks"/> for what this guards against.</summary>
-        private int _lastAcceptedPressTick = int.MinValue;
+        /// <summary><see cref="Game1.ticks"/> value at the last shoulder-button press <see cref="OnButtonPressed"/> actually accepted, or <see langword="null"/> before the first one. See <see cref="DebounceTicks"/> for what this guards against, and <see cref="OnButtonPressed"/>'s remarks for why this needs to be nullable rather than a sentinel <c>int</c> value.</summary>
+        private int? _lastAcceptedPressTick;
 
-        /// <summary>Minimum gap, in game ticks, between two accepted trigger/shoulder presses — see <see cref="OnButtonPressed"/>'s doc comment for the real-device evidence this is fixing. 4 ticks (~65ms at 60 ticks/sec) is comfortably above a same-press analog-trigger jitter re-fire (landed within 0-1 ticks in the capture that surfaced this) and comfortably below any human's fastest deliberate repeat presses (well over 100ms apart even mashing).</summary>
+        /// <summary>Minimum gap, in game ticks, between two accepted shoulder-button presses. 4 ticks (~65ms at 60 ticks/sec) is comfortably below any human's fastest deliberate repeat presses. (Originally sized against suspected same-press analog-trigger jitter — since triggers no longer go through this debounce at all, per <see cref="OnButtonPressed"/>'s remarks, that reasoning no longer applies here, but the value is still a reasonable floor for a physical button.)</summary>
         private const int DebounceTicks = 4;
 
         // ---- Debug-only counters, added 2026-09-12 for real-device
@@ -47,10 +47,10 @@ namespace StardewDS
         // press number here should match. A mismatch is itself a finding
         // (see each counter's own doc comment for what it isolates).
 
-        /// <summary>Every raw <c>SButton.LeftTrigger</c>/<c>RightTrigger</c>/<c>LeftShoulder</c>/<c>RightShoulder</c> <see cref="OnButtonPressed"/> event received, counted before the <see cref="DebounceTicks"/> filter runs. If this climbs faster than the player is physically pressing the button, SMAPI itself is delivering more than one event per physical press (the analog-trigger-jitter theory <see cref="RequestCycle"/>'s doc comment describes).</summary>
+        /// <summary>Every raw <c>SButton.LeftTrigger</c>/<c>RightTrigger</c>/<c>LeftShoulder</c>/<c>RightShoulder</c> <see cref="OnButtonPressed"/> event received. Triggers are counted but otherwise untouched (see <see cref="OnButtonPressed"/>'s remarks); shoulders are counted before the <see cref="DebounceTicks"/> filter runs. If a shoulder count climbs faster than the player is physically pressing the button, SMAPI itself is delivering more than one event per physical press.</summary>
         private int _debugRawEventCount;
 
-        /// <summary>Every raw event that survived the <see cref="DebounceTicks"/> filter and actually called <see cref="RequestCycle"/>. If THIS climbs slower than physical presses (falls behind <see cref="_debugRawEventCount"/> matching 1:1 with real presses), the debounce window is eating genuine presses, not just jitter — a real bug the debounce itself could introduce, distinct from the jitter it's meant to filter.</summary>
+        /// <summary>Every raw shoulder-button event that survived the <see cref="DebounceTicks"/> filter and actually called <see cref="RequestCycle"/>. If THIS climbs slower than physical presses (falls behind <see cref="_debugRawEventCount"/>'s shoulder-only subset matching 1:1 with real presses), the debounce window is eating genuine presses — a real bug the debounce itself could introduce.</summary>
         private int _debugAcceptedPressCount;
 
         /// <summary>Last <c>Farmer.CurrentToolIndex</c> value logged by the per-tick change watcher in <see cref="OnUpdateTicked"/>, so that watcher logs only on an actual change instead of once per tick. <see langword="null"/> means nothing logged yet this session.</summary>
@@ -92,7 +92,7 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the trigger/shoulder buttons just cycled to (see <see cref="ReassertDesiredToolIndex"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the shoulder buttons just cycled to (see <see cref="ReassertDesiredToolIndex"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
@@ -171,7 +171,7 @@ namespace StardewDS
                 }
 
                 // Order matters: an app tap should always win over a
-                // trigger/shoulder cycle still in its reassert window (see
+                // shoulder-button cycle still in its reassert window (see
                 // ReassertDesiredToolIndex's doc comment), so apply the
                 // app's request first and only reassert afterward if the
                 // app didn't just pick something itself this tick.
@@ -190,7 +190,7 @@ namespace StardewDS
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
         }
 
-        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted trigger/shoulder cycle (see <see cref="ReassertDesiredToolIndex"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
+        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted shoulder-button cycle (see <see cref="ReassertDesiredToolIndex"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
             this._desiredToolIndex = null;
@@ -199,54 +199,49 @@ namespace StardewDS
         }
 
 
-        /// <summary>Raised when any button is pressed — takes over all four of the trigger and shoulder buttons (L2/R2 and L1/R1 on the handheld this mod targets) so they step the selected slot through the player's entire backpack instead of the vanilla row system.</summary>
+        /// <summary>Raised when any button is pressed — takes over the two shoulder buttons (L1/R1 on the handheld this mod targets) so they step the selected slot 12 places through the player's entire backpack instead of rotating the hotbar. The trigger buttons (L2/R2) are deliberately NOT handled here — see the remarks below for why.</summary>
         /// <remarks>
-        /// Vanilla splits this in two: the triggers move the selection by
-        /// one within the twelve visible hotbar slots (wrapping at 0/11),
-        /// and the shoulder buttons call <see cref="Farmer.shiftToolbar"/>
-        /// to rotate a *different* twelve items into the hotbar (see
-        /// <see cref="InventoryNavigationPatches"/>'s doc comment). Both
-        /// disagree with the app, which shows all <c>MaxItems</c> slots at
-        /// once and lets you tap any of them: a trigger press after tapping
-        /// slot 20 snapped the selection back into slots 0-11, and a
-        /// shoulder press rotated the *items themselves* out from under
-        /// the app's grid.
+        /// Earlier versions of this method also intercepted the triggers,
+        /// suppressing them and reimplementing a ±1 step ourselves — twice
+        /// revised across two real-device tests chasing a double-jump, then
+        /// an occasional skip. A third test (2026-09-12), with debug
+        /// logging that watches <c>Farmer.CurrentToolIndex</c> independent
+        /// of anything this file does (see <see cref="DebugLogToolIndexChanges"/>),
+        /// settled it: a bug in that version's debounce (subtracting
+        /// against an <c>int.MinValue</c> sentinel, which overflows)
+        /// caused every single trigger press that whole session to be
+        /// rejected before <c>RequestCycle</c> ever ran — and
+        /// <c>CurrentToolIndex</c> still advanced by exactly one per press
+        /// anyway. That's direct proof <c>IInputHelper.Suppress</c> has no
+        /// effect at all on these two buttons on this platform (not just
+        /// "unreliable" — the base game's own handling was 100% in control
+        /// the entire time), and that vanilla's own single-step trigger
+        /// logic is already correct on its own. The double-jumps and skips
+        /// in the earlier tests were therefore almost certainly this file's
+        /// own step landing on top of vanilla's, not vanilla misbehaving —
+        /// a problem that fighting vanilla harder can't fix, only stopping
+        /// the fight does.
         ///
-        /// So both pairs are suppressed here and reimplemented as index-only
-        /// steps across the whole backpack — the triggers by 1, the
-        /// shoulders by 12 (a "page" jump, without any item rotation, so
-        /// the app's grid and the equipped item never disagree) — bounded
-        /// by <c>MaxItems</c>, the same number the app locks its grid at.
+        /// So the triggers are left alone now: vanilla handles them,
+        /// unsuppressed, and <see cref="DebugLogToolIndexChanges"/> watches
+        /// the result every tick regardless of what caused it. If vanilla's
+        /// own step turns out to still wrap at slot 11 (its old
+        /// hotbar-only boundary) instead of continuing into the rest of
+        /// the backpack now that <see cref="InventoryNavigationPatches"/>
+        /// has disabled row rotation, that specific boundary needs its own
+        /// fix — but not yet known whether it does, hence leaving triggers
+        /// alone first to get a clean read rather than guessing at a
+        /// correction blind.
         ///
-        /// Suppressing rather than patching is deliberate for the same
-        /// reason <see cref="InventoryNavigationPatches"/>'s Harmony prefix
-        /// turned out not to be enough on its own: it works regardless of
-        /// which method the game routes these buttons through, and doesn't
-        /// depend on guessing the right one.
-        ///
-        /// Two real-device tests found two distinct problems with what
-        /// this method used to do (set <c>CurrentToolIndex</c> directly, no
-        /// debounce): the first showed the trigger buttons moving the
-        /// selection by two slots on every single press — see
-        /// <see cref="RequestCycle"/>'s doc comment for that fix (a reassert
-        /// window instead of an immediate set). The second, after that fix
-        /// shipped, showed most presses moving cleanly by one slot but an
-        /// occasional press still skipping one — frame-by-frame analysis of
-        /// a capture showed the skipped presses landing within a tick or
-        /// two of the previous one, consistent with SMAPI's analog-trigger
-        /// edge detection firing <em>this event itself</em> twice for one
-        /// physical squeeze (a documented characteristic of thresholding a
-        /// continuous analog value into a digital press/release), which
-        /// <see cref="RequestCycle"/>'s "stack onto whatever's already
-        /// pending" design then read as two genuine rapid presses. The
-        /// debounce below (<see cref="_lastAcceptedPressTick"/>,
-        /// <see cref="DebounceTicks"/>) rejects a second press landing
-        /// implausibly soon after the last one actually accepted — well
-        /// under any human's fastest deliberate repeat press, comfortably
-        /// above where that jitter landed in the capture.
+        /// The shoulder buttons are a different situation: their own
+        /// vanilla action (<see cref="Farmer.shiftToolbar"/>) is
+        /// confirmed actually disabled (see that method's patch), so
+        /// there's no vanilla behavior left to watch or fight — suppressing
+        /// them and reimplementing the ±12 jump ourselves, as below, is
+        /// the entire mechanism, not a layer on top of vanilla's own.
         ///
         /// Only during normal gameplay (<see cref="Context.IsPlayerFree"/>).
-        /// In menus these buttons page between inventory/crafting tabs,
+        /// In menus this button pages between inventory/crafting tabs,
         /// which this must not eat.
         /// </remarks>
         private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
@@ -254,10 +249,21 @@ namespace StardewDS
             if (!Context.IsPlayerFree)
                 return;
 
+            // Debug-only (2026-09-12): still logged so a raw trigger event
+            // count is available to compare against physical presses, even
+            // though nothing here acts on it any more.
+            if (e.Button is SButton.LeftTrigger or SButton.RightTrigger)
+            {
+                this._debugRawEventCount++;
+                this.Monitor.Log(
+                    $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — left to vanilla (not suppressed, no RequestCycle); see DebugLogToolIndexChanges for the resulting CurrentToolIndex.",
+                    LogLevel.Debug
+                );
+                return;
+            }
+
             int delta = e.Button switch
             {
-                SButton.RightTrigger => 1,
-                SButton.LeftTrigger => -1,
                 SButton.RightShoulder => 12,
                 SButton.LeftShoulder => -12,
                 _ => 0
@@ -265,18 +271,24 @@ namespace StardewDS
             if (delta == 0)
                 return;
 
-            // Always suppress, even a press this tick's debounce is about
-            // to reject below — an un-suppressed press could still reach
-            // vanilla's own (bypassed-by-suppression-failures-aside)
-            // handling of these buttons.
             this.Helper.Input.Suppress(e.Button);
 
             this._debugRawEventCount++;
-            int gap = Game1.ticks - this._lastAcceptedPressTick;
-            if (gap < DebounceTicks)
+            // _lastAcceptedPressTick is null until the first accepted
+            // press — treat that as "always accept" rather than
+            // subtracting against an int sentinel: Game1.ticks -
+            // int.MinValue overflows (its magnitude exceeds int.MaxValue),
+            // wrapping to a huge negative number that's always less than
+            // DebounceTicks. A 2026-09-12 test with exactly that sentinel
+            // bug showed every press for a whole session silently rejected
+            // as a result — see this method's own remarks for the full
+            // story that log told once cross-checked against
+            // DebugLogToolIndexChanges.
+            int? gap = this._lastAcceptedPressTick is int last ? Game1.ticks - last : null;
+            if (gap is int g && g < DebounceTicks)
             {
                 this.Monitor.Log(
-                    $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — REJECTED by debounce (gap {gap} < {DebounceTicks} ticks since last accepted press #{this._debugAcceptedPressCount}).",
+                    $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — REJECTED by debounce (gap {g} < {DebounceTicks} ticks since last accepted press #{this._debugAcceptedPressCount}).",
                     LogLevel.Debug
                 );
                 return;
@@ -285,40 +297,40 @@ namespace StardewDS
 
             this._debugAcceptedPressCount++;
             this.Monitor.Log(
-                $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — ACCEPTED as press #{this._debugAcceptedPressCount} (gap {gap} ticks), CurrentToolIndex before={Game1.player?.CurrentToolIndex.ToString() ?? "null"}.",
+                $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — ACCEPTED as press #{this._debugAcceptedPressCount} (gap {gap?.ToString() ?? "n/a (first press)"} ticks), CurrentToolIndex before={Game1.player?.CurrentToolIndex.ToString() ?? "null"}.",
                 LogLevel.Debug
             );
 
             this.RequestCycle(delta);
         }
 
-        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="ReassertDesiredToolIndex"/> to actually apply (and keep re-applying for a few ticks — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked. Empty slots are stepped onto rather than skipped, matching what vanilla's own trigger swap does within the hotbar.</summary>
+        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="ReassertDesiredToolIndex"/> to actually apply (and keep re-applying for a few ticks — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked. Only ever called for shoulder-button presses now — see <see cref="OnButtonPressed"/>'s remarks for why the triggers no longer go through this at all.</summary>
         /// <remarks>
         /// This does NOT set <see cref="Farmer.CurrentToolIndex"/> directly
-        /// — a first version of this file did, immediately, from inside
-        /// <see cref="OnButtonPressed"/>. A real-device test of that
-        /// version showed the trigger buttons moving the selection by
-        /// *two* slots per press instead of one: SMAPI's button suppression
-        /// is well-documented as unreliable for analog triggers
-        /// specifically (the base game can read the raw controller state
-        /// directly, bypassing the suppression layer that only intercepts
-        /// SMAPI's own input APIs), so vanilla's own hotbar-only step could
-        /// still land in the same tick as this one, on top of it.
+        /// — an early version of this file did, immediately, from inside
+        /// <see cref="OnButtonPressed"/>, and a real-device test of that
+        /// version showed the selection moving by two slots per press
+        /// instead of one. Deferring the actual write to
+        /// <see cref="ReassertDesiredToolIndex"/> (forced once a tick for a
+        /// few ticks, rather than set once here) is what makes that safe
+        /// regardless of exact timing — see this method's own doc comment
+        /// for the current reasoning; for the triggers specifically, later
+        /// evidence showed vanilla's own action was the ENTIRE cause of
+        /// that double-step (see <see cref="OnButtonPressed"/>'s remarks
+        /// for the full 2026-09-12 finding), which is why this method is
+        /// only reached for shoulder presses at all today — for those,
+        /// <see cref="Farmer.shiftToolbar"/> is confirmed patched out, so
+        /// there's no vanilla action left to race against; the deferred
+        /// write here is just conservatism carried over from when there
+        /// was.
         ///
-        /// Rather than trying to out-guess exactly when in the tick vanilla
-        /// runs relative to this handler, this method only records the
-        /// *intent* (this field, plus <see cref="_reassertTicksRemaining"/>
-        /// reset to <see cref="ReassertTicks"/>), computed from whatever
+        /// The *intent* is recorded here (this field, plus
+        /// <see cref="_reassertTicksRemaining"/> reset to
+        /// <see cref="ReassertTicks"/>), computed from whatever
         /// <see cref="_desiredToolIndex"/> already holds if a previous
         /// press's reassert window is still running (so several quick
         /// presses stack correctly instead of each reading a
-        /// possibly-already-stale <c>CurrentToolIndex</c>). Applying it is
-        /// left entirely to <see cref="ReassertDesiredToolIndex"/>, which
-        /// forces this exact value back onto <c>CurrentToolIndex</c> once a
-        /// tick for the next few ticks regardless of what vanilla did to it
-        /// in between — so it doesn't matter whether vanilla reacted zero,
-        /// one, or two times; the end state after the window is always
-        /// this value.
+        /// possibly-already-stale <c>CurrentToolIndex</c>).
         /// </remarks>
         private void RequestCycle(int delta)
         {
@@ -343,7 +355,7 @@ namespace StardewDS
             Game1.playSound("toolSwap");
         }
 
-        /// <summary>Forces <see cref="Farmer.CurrentToolIndex"/> back to <see cref="_desiredToolIndex"/> once per tick for the next few ticks after a trigger/shoulder press — see <see cref="RequestCycle"/>'s doc comment for why a single one-shot re-apply (an earlier version of this file) wasn't enough. Cancelled early — before its window naturally runs out — whenever <paramref name="cancelled"/> is true, so a fresh app-originated tap (<see cref="ApplyPendingSelection"/>, applied first in <see cref="OnUpdateTicked"/>) isn't immediately stomped back to wherever the controller last pointed.</summary>
+        /// <summary>Forces <see cref="Farmer.CurrentToolIndex"/> back to <see cref="_desiredToolIndex"/> once per tick for the next few ticks after a shoulder-button press — see <see cref="RequestCycle"/>'s doc comment for the (now largely historical) reasoning. Cancelled early — before its window naturally runs out — whenever <paramref name="cancelled"/> is true, so a fresh app-originated tap (<see cref="ApplyPendingSelection"/>, applied first in <see cref="OnUpdateTicked"/>) isn't immediately stomped back to wherever the controller last pointed.</summary>
         private void ReassertDesiredToolIndex(bool cancelled)
         {
             if (cancelled)
