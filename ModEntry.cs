@@ -24,8 +24,14 @@ namespace StardewDS
         private bool _pendingOrganize;
         private bool _pendingOpenJournal;
 
-        /// <summary>The slot <see cref="OnButtonPressed"/> just cycled to with the trigger buttons, re-asserted once on the following <see cref="OnUpdateTicked"/>. See <see cref="ReassertCycledSlot"/> for why this needs re-asserting at all. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one is only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
-        private int? _cycledSlot;
+        /// <summary>How many further <see cref="OnUpdateTicked"/> calls will keep re-applying <see cref="_desiredToolIndex"/> after a trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for why one shot isn't enough. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one and <see cref="_desiredToolIndex"/> are only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
+        private int _reassertTicksRemaining;
+
+        /// <summary>The slot index <see cref="RequestCycle"/> last computed from a trigger/shoulder press, re-applied every tick while <see cref="_reassertTicksRemaining"/> is still positive. <see langword="null"/> once that window has elapsed (or been cancelled by a fresher app-originated selection — see <see cref="OnUpdateTicked"/>).</summary>
+        private int? _desiredToolIndex;
+
+        /// <summary>How many ticks (~<c>1000/60</c>ms apiece) to keep re-applying <see cref="_desiredToolIndex"/> after each trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for what this is guarding against; 3 is a handful of frames — long enough to win against a same-press vanilla reaction landing a tick or two late, short enough that it never fights a later, legitimate change (an app tap, a different button) for more than an eyeblink.</summary>
+        private const int ReassertTicks = 3;
 
         /*********
         ** Public methods
@@ -35,9 +41,11 @@ namespace StardewDS
         public override void Entry(IModHelper helper)
         {
             HudBarPatches.Monitor = this.Monitor;
+            InventoryNavigationPatches.Monitor = this.Monitor;
 
             Harmony harmony = new(this.ModManifest.UniqueID);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
+            InventoryNavigationPatches.CheckPatched(harmony);
 
             this._server = new CompanionServer(this.Monitor, Port, this.OnSelectRequested, this.OnMoveRequested, this.OnOrganizeRequested, this.OnOpenJournalRequested);
 
@@ -61,7 +69,7 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the trigger buttons just cycled to (see <see cref="ReassertCycledSlot"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the trigger/shoulder buttons just cycled to (see <see cref="ReassertDesiredToolIndex"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
@@ -139,11 +147,13 @@ namespace StardewDS
                         Game1.uiOverlayTempSprites.RemoveAt(i);
                 }
 
-                // Before ApplyPendingSelection, deliberately: if the
-                // player cycled with a trigger and tapped a slot in the
-                // app on the same tick, the explicit tap should win.
-                this.ReassertCycledSlot();
-                this.ApplyPendingSelection();
+                // Order matters: an app tap should always win over a
+                // trigger/shoulder cycle still in its reassert window (see
+                // ReassertDesiredToolIndex's doc comment), so apply the
+                // app's request first and only reassert afterward if the
+                // app didn't just pick something itself this tick.
+                bool appSelected = this.ApplyPendingSelection();
+                this.ReassertDesiredToolIndex(cancelled: appSelected);
                 this.ApplyPendingMove();
                 this.ApplyPendingOrganize();
                 this.ApplyPendingOpenJournal();
@@ -152,55 +162,97 @@ namespace StardewDS
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
         }
 
-        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted trigger cycle (see <see cref="ReassertCycledSlot"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
+        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted trigger/shoulder cycle (see <see cref="ReassertDesiredToolIndex"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
-            this._cycledSlot = null;
+            this._desiredToolIndex = null;
+            this._reassertTicksRemaining = 0;
             this._server?.UpdateSnapshot(null);
         }
 
 
-        /// <summary>Raised when any button is pressed — takes over the two trigger buttons (L2/R2 on the handheld this mod targets) so they step the selected slot through the player's entire backpack instead of wrapping inside the first twelve slots.</summary>
+        /// <summary>Raised when any button is pressed — takes over all four of the trigger and shoulder buttons (L2/R2 and L1/R1 on the handheld this mod targets) so they step the selected slot through the player's entire backpack instead of the vanilla row system.</summary>
         /// <remarks>
-        /// Vanilla's trigger handling lives inline in the game's own input
-        /// update and only ever moves within the twelve hotbar slots (the
-        /// other rows are meant to be reached by shifting the toolbar,
-        /// which <see cref="InventoryNavigationPatches"/> now disables). The
-        /// app, though, shows all <c>MaxItems</c> slots at once and lets you
-        /// tap any of them — so after tapping, say, slot 20, one trigger
-        /// press would snap the selection back into slots 0-11 and the two
-        /// cursors would disagree. Suppressing the button and doing the
-        /// step here keeps them in lockstep.
+        /// Vanilla splits this in two: the triggers move the selection by
+        /// one within the twelve visible hotbar slots (wrapping at 0/11),
+        /// and the shoulder buttons call <see cref="Farmer.shiftToolbar"/>
+        /// to rotate a *different* twelve items into the hotbar (see
+        /// <see cref="InventoryNavigationPatches"/>'s doc comment). Both
+        /// disagree with the app, which shows all <c>MaxItems</c> slots at
+        /// once and lets you tap any of them: a trigger press after tapping
+        /// slot 20 snapped the selection back into slots 0-11, and a
+        /// shoulder press rotated the *items themselves* out from under
+        /// the app's grid.
         ///
-        /// Suppressing rather than patching is deliberate: it works
-        /// regardless of which method the game routes the triggers through
-        /// (they've moved between game versions), and it can't fail the way
-        /// a patch on a renamed method would.
+        /// So both pairs are suppressed here and reimplemented as index-only
+        /// steps across the whole backpack — the triggers by 1, the
+        /// shoulders by 12 (a "page" jump, without any item rotation, so
+        /// the app's grid and the equipped item never disagree) — bounded
+        /// by <c>MaxItems</c>, the same number the app locks its grid at.
+        ///
+        /// Suppressing rather than patching is deliberate for the same
+        /// reason <see cref="InventoryNavigationPatches"/>'s Harmony prefix
+        /// turned out not to be enough on its own: it works regardless of
+        /// which method the game routes these buttons through, and doesn't
+        /// depend on guessing the right one. A real-device test (see
+        /// <see cref="RequestCycle"/>'s doc comment) showed that suppression
+        /// alone isn't fully reliable for the *trigger* buttons specifically
+        /// either, which is what <see cref="RequestCycle"/>'s reassert
+        /// window is for.
         ///
         /// Only during normal gameplay (<see cref="Context.IsPlayerFree"/>).
-        /// In menus the triggers page between inventory/crafting tabs, which
-        /// this must not eat.
+        /// In menus these buttons page between inventory/crafting tabs,
+        /// which this must not eat.
         /// </remarks>
         private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
         {
             if (!Context.IsPlayerFree)
                 return;
 
-            int direction = e.Button switch
+            int delta = e.Button switch
             {
                 SButton.RightTrigger => 1,
                 SButton.LeftTrigger => -1,
+                SButton.RightShoulder => 12,
+                SButton.LeftShoulder => -12,
                 _ => 0
             };
-            if (direction == 0)
+            if (delta == 0)
                 return;
 
             this.Helper.Input.Suppress(e.Button);
-            this.CycleSelectedSlot(direction);
+            this.RequestCycle(delta);
         }
 
-        /// <summary>Steps the selected slot <paramref name="direction"/> places through the player's unlocked backpack, wrapping at both ends. The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked. Empty slots are stepped onto rather than skipped, matching what vanilla's own trigger swap does within the hotbar.</summary>
-        private void CycleSelectedSlot(int direction)
+        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="ReassertDesiredToolIndex"/> to actually apply (and keep re-applying for a few ticks — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked. Empty slots are stepped onto rather than skipped, matching what vanilla's own trigger swap does within the hotbar.</summary>
+        /// <remarks>
+        /// This does NOT set <see cref="Farmer.CurrentToolIndex"/> directly
+        /// — a first version of this file did, immediately, from inside
+        /// <see cref="OnButtonPressed"/>. A real-device test of that
+        /// version showed the trigger buttons moving the selection by
+        /// *two* slots per press instead of one: SMAPI's button suppression
+        /// is well-documented as unreliable for analog triggers
+        /// specifically (the base game can read the raw controller state
+        /// directly, bypassing the suppression layer that only intercepts
+        /// SMAPI's own input APIs), so vanilla's own hotbar-only step could
+        /// still land in the same tick as this one, on top of it.
+        ///
+        /// Rather than trying to out-guess exactly when in the tick vanilla
+        /// runs relative to this handler, this method only records the
+        /// *intent* (this field, plus <see cref="_reassertTicksRemaining"/>
+        /// reset to <see cref="ReassertTicks"/>), computed from whatever
+        /// <see cref="_desiredToolIndex"/> already holds if a previous
+        /// press's reassert window is still running (so several quick
+        /// presses stack correctly instead of each reading a
+        /// possibly-already-stale <c>CurrentToolIndex</c>). Applying it is
+        /// left entirely to <see cref="ReassertDesiredToolIndex"/>, which
+        /// forces this exact value back onto <c>CurrentToolIndex</c> once a
+        /// tick for the next few ticks regardless of what vanilla did to it
+        /// in between — so it doesn't matter whether vanilla reacted zero,
+        /// one, or two times; the end state after the window is always
+        /// this value.
+        /// </remarks>
+        private void RequestCycle(int delta)
         {
             Farmer? player = Game1.player;
             if (player is null)
@@ -210,35 +262,33 @@ namespace StardewDS
             if (capacity <= 0)
                 return;
 
-            int next = ((player.CurrentToolIndex + direction) % capacity + capacity) % capacity;
-            if (next == player.CurrentToolIndex)
-                return;
+            int baseIndex = this._desiredToolIndex ?? player.CurrentToolIndex;
+            int next = ((baseIndex + delta) % capacity + capacity) % capacity;
 
-            player.CurrentToolIndex = next;
-            this._cycledSlot = next;
+            this._desiredToolIndex = next;
+            this._reassertTicksRemaining = ReassertTicks;
             Game1.playSound("toolSwap");
         }
 
-        /// <summary>Re-applies the slot the last trigger press cycled to, once, on the update tick that follows it.</summary>
-        /// <remarks>
-        /// Belt-and-suspenders, in the same spirit as the
-        /// <c>Game1.onScreenMenus</c> filtering above. <see cref="OnButtonPressed"/>
-        /// suppresses the trigger before the game's own input update runs,
-        /// which should mean the game never sees it — but if a future SMAPI
-        /// or game version stops honouring suppression for the analog
-        /// triggers specifically, vanilla would run its own hotbar-only
-        /// wrap immediately after ours and quietly undo it. Re-asserting
-        /// costs one integer compare per tick and makes that failure mode a
-        /// no-op instead of a regression. When suppression works normally
-        /// the index already matches and this changes nothing.
-        /// </remarks>
-        private void ReassertCycledSlot()
+        /// <summary>Forces <see cref="Farmer.CurrentToolIndex"/> back to <see cref="_desiredToolIndex"/> once per tick for the next few ticks after a trigger/shoulder press — see <see cref="RequestCycle"/>'s doc comment for why a single one-shot re-apply (an earlier version of this file) wasn't enough. Cancelled early — before its window naturally runs out — whenever <paramref name="cancelled"/> is true, so a fresh app-originated tap (<see cref="ApplyPendingSelection"/>, applied first in <see cref="OnUpdateTicked"/>) isn't immediately stomped back to wherever the controller last pointed.</summary>
+        private void ReassertDesiredToolIndex(bool cancelled)
         {
-            int? slot = this._cycledSlot;
-            this._cycledSlot = null;
+            if (cancelled)
+            {
+                this._desiredToolIndex = null;
+                this._reassertTicksRemaining = 0;
+                return;
+            }
 
-            if (slot is int index && Game1.player is Farmer player && index >= 0 && index < player.MaxItems)
+            if (this._reassertTicksRemaining <= 0 || this._desiredToolIndex is not int index)
+                return;
+
+            if (Game1.player is Farmer player && index >= 0 && index < player.MaxItems)
                 player.CurrentToolIndex = index;
+
+            this._reassertTicksRemaining--;
+            if (this._reassertTicksRemaining <= 0)
+                this._desiredToolIndex = null;
         }
 
 
@@ -278,8 +328,8 @@ namespace StardewDS
             }
         }
 
-        /// <summary>Applies (on the main thread) the most recent pending selection request from the app, if any.</summary>
-        private void ApplyPendingSelection()
+        /// <summary>Applies (on the main thread) the most recent pending selection request from the app, if any. Returns whether one was actually applied, so <see cref="OnUpdateTicked"/> knows to cancel any still-running trigger/shoulder reassert window (see <see cref="ReassertDesiredToolIndex"/>) rather than let it stomp this fresher choice back.</summary>
+        private bool ApplyPendingSelection()
         {
             int? index;
             lock (this._pendingLock)
@@ -289,7 +339,12 @@ namespace StardewDS
             }
 
             if (index is int i && Game1.player is not null && i >= 0 && i < Game1.player.MaxItems)
+            {
                 Game1.player.CurrentToolIndex = i;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>Applies (on the main thread) the most recent pending move request from the app, if any — swaps whatever is in the two slots. Both indices must be within the player's current (unlocked) backpack capacity; out-of-range requests (e.g. a stale drag onto a slot that got locked) are silently dropped rather than applied partially.</summary>

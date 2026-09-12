@@ -59,15 +59,17 @@ What it does once running:
   suits the app, which draws all `MaxItems` slots at once and lets you tap
   any of them: the rotation makes every item in the app's grid appear to
   jump to a different slot, and a trigger press after tapping (say) slot 20
-  snaps the selection back into slots 0-11. So `Farmer.shiftToolbar` is
-  Harmony-prefixed to do nothing at all, and the triggers are suppressed
-  via SMAPI (`IInputHelper.Suppress`) and re-implemented to step through
-  the whole backpack with wraparound. The shoulder buttons are inert
-  during gameplay as a result — with every slot one tap away in the app
-  and the triggers covering all of them, there's nothing left for a "next
-  12 slots" action to do. The triggers are only taken over while
-  `Context.IsPlayerFree`, so their menu use (paging between
-  inventory/crafting tabs) is untouched.
+  snaps the selection back into slots 0-11.
+  So all four of the trigger and shoulder buttons are suppressed via SMAPI
+  (`IInputHelper.Suppress`) and reimplemented as index-only steps across
+  the whole backpack — triggers by 1, shoulders by 12 (a "page" jump, no
+  item rotation, so the shoulder buttons stay useful instead of going idle)
+  — plus `Farmer.shiftToolbar` is Harmony-prefixed to a no-op as a second
+  line of defense (see "Known risk areas" **4b** for why one line wasn't
+  enough on a real device, and why the trigger step is applied through a
+  short reassert window rather than once). Only while `Context.IsPlayerFree`,
+  so these buttons' menu use (paging between inventory/crafting tabs) is
+  untouched.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -390,20 +392,39 @@ likely each is to have shifted:
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
 4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
-   backpack-navigation rework. Three things here are worth checking on a
-   real run rather than a build:
-   - `Farmer.shiftToolbar(bool)` is targeted by `nameof`, so a rename
-     breaks the *build* rather than silently restoring row rotation —
-     that's the intended failure mode, not a bug.
-   - Trigger suppression relies on SMAPI honouring
-     `IInputHelper.Suppress` for the analog triggers. If it ever doesn't,
-     vanilla's own hotbar-only wrap would run right after ours;
-     `ModEntry.ReassertCycledSlot` re-applies our index on the same
-     tick's `UpdateTicked` specifically so that degrades to a no-op
-     instead of a visible regression.
+   backpack-navigation rework, revised once already after a real-device
+   test (2026-09-12) surfaced two problems the first version had:
+   - **Rows stayed active.** `Farmer.shiftToolbar(bool)` compiles fine
+     under `nameof`, but that only proves the *name* exists — it was never
+     checked against the decompiled source (no `vendor` access in the
+     sandbox that wrote it) that this is actually the overload/arity the
+     game calls for a controller shoulder press, and evidently it wasn't
+     doing anything. `ModEntry.Entry` now calls
+     `InventoryNavigationPatches.CheckPatched` right after `PatchAll`,
+     which logs a warning naming exactly this if the prefix ever finds
+     nothing to patch — check the SMAPI log first if rows come back.
+     Belt-and-suspenders fix: `ModEntry.OnButtonPressed` now also
+     suppresses the shoulder buttons directly (repurposed as a ±12 index
+     jump), which starves whatever method the game actually calls of
+     input regardless of what that method is named.
+   - **Triggers moved the selection by two slots per press, not one.**
+     SMAPI's `IInputHelper.Suppress` is unreliable for analog triggers
+     specifically — the base game can read the raw controller state
+     directly, bypassing the layer that only intercepts SMAPI's own input
+     APIs — so vanilla's own hotbar-only step could still land in the same
+     tick as this mod's, on top of it. Fixed by no longer setting
+     `CurrentToolIndex` immediately from the button-press handler at all;
+     `ModEntry.RequestCycle` only records the intended index, and
+     `ModEntry.ReassertDesiredToolIndex` forces it back onto
+     `CurrentToolIndex` once a tick for a few ticks after each press
+     (`ReassertTicks`), so the end state after that window is correct
+     regardless of whether vanilla reacted zero, one, or two times to the
+     same press. Cancelled early by a fresh app-originated tap so it never
+     fights a `POST /select` that lands mid-window.
    - The `"toolSwap"` cue name passed to `Game1.playSound` on each step
      is the one vanilla uses for tool switching; if it's wrong you'd get
-     a silent (or logged-error) swap, not a crash.
+     a silent (or logged-error) swap, not a crash. Unconfirmed either way
+     by the 2026-09-12 test.
 
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
