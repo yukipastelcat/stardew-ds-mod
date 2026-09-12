@@ -1,4 +1,5 @@
-using System.Linq;
+using System;
+using System.Reflection;
 using HarmonyLib;
 using StardewModdingAPI;
 using StardewValley;
@@ -23,69 +24,79 @@ namespace StardewDS
     /// in the app's grid appear to teleport to a different slot while the
     /// selection stays put — the two views drift apart for no gain.
     ///
-    /// So the prefix below skips the rotation outright. The shoulder
-    /// buttons themselves aren't left idle — see <see cref="ModEntry.OnButtonPressed"/>,
-    /// which repurposes them as a ±12 index jump instead (no item
-    /// rotation, so alignment holds).
+    /// So <see cref="Apply"/> below skips the rotation outright. The
+    /// shoulder buttons themselves aren't left idle — see
+    /// <see cref="ModEntry.OnButtonPressed"/>, which repurposes them as a
+    /// ±12 index jump instead (no item rotation, so alignment holds).
     /// </summary>
     /// <remarks>
-    /// 2026-09-12: a real-device test of the first version of this file
-    /// (Harmony prefix only, nothing else) showed rows still active — the
-    /// shoulder button still rotated the hotbar. Unlike every other patch
-    /// in this codebase, this one was never checked against the decompiled
-    /// source (this sandbox has no access to the private <c>vendor</c>
-    /// reference assemblies — see the README's "CI builds" section), so
-    /// <c>nameof(Farmer.shiftToolbar)</c> — while it compiles, since
-    /// <c>nameof</c> only proves the *name* exists, not that this is the
-    /// overload/arity the game actually calls for a controller shoulder
-    /// press — is a genuine guess, and apparently a wrong one.
+    /// 2026-09-12, first real-device test: rows still active — the
+    /// shoulder button still rotated the hotbar. The method target
+    /// (<c>Farmer.shiftToolbar(bool)</c>, checked by <c>nameof</c>) was
+    /// never verified against decompiled source (no <c>vendor</c> access in
+    /// the sandbox that wrote it), so the working theory was a wrong
+    /// overload/signature. Fixed by having <see cref="ModEntry.OnButtonPressed"/>
+    /// ALSO suppress <c>SButton.LeftShoulder</c>/<c>RightShoulder</c>
+    /// directly (repurposed as a ±12 cursor jump) as a second, independent
+    /// line of defense that doesn't depend on knowing which method the game
+    /// calls.
     ///
-    /// Rather than keep guessing at the exact method, <see cref="ModEntry.OnButtonPressed"/>
-    /// now ALSO suppresses <c>SButton.LeftShoulder</c>/<c>RightShoulder</c>
-    /// directly (the same technique already used for the trigger buttons —
-    /// see that method's own doc comment) and repurposes them as a ±12
-    /// cursor jump. That's a second, independent line of defense that
-    /// doesn't depend on knowing which method the game calls: if the
-    /// button itself never reaches the game, whatever it would have called
-    /// doesn't get to run either. The Harmony prefix below is kept as a
-    /// third line of defense (e.g. for a keyboard's Tab key, which isn't a
-    /// gamepad button and so isn't covered by suppression) — see
-    /// <see cref="CheckPatched"/> for how a future test can tell whether it
-    /// found its target at all.
+    /// Second real-device test, same day: the SMAPI log settled the
+    /// question the first fix couldn't —
+    /// <c>AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })</c>
+    /// DOES find the method (so the signature was right all along), but
+    /// <c>harmony.GetPatchedMethods()</c> didn't include it after
+    /// <c>harmony.PatchAll(Assembly.GetExecutingAssembly())</c> — the
+    /// attribute-based scan itself wasn't applying this particular patch,
+    /// for reasons that log line can't explain any further (every other
+    /// annotated patch in this mod, including two in this same file's
+    /// sibling <see cref="HudPatches"/> using the identical
+    /// `[HarmonyPrefix] + [HarmonyPatch(...)]`-on-one-method style, applied
+    /// fine per the same log). Rather than keep guessing at PatchAll's
+    /// internals with no way to compile-test the guess, <see cref="Apply"/>
+    /// now patches this one method imperatively — <c>harmony.Patch(...)</c>
+    /// called directly from <see cref="ModEntry.Entry"/>, wrapped in its own
+    /// try/catch — instead of relying on attribute scanning to find it.
+    /// This sidesteps the mystery entirely: either it patches (and logs
+    /// success) or the catch block logs the real exception, which
+    /// attribute-based scanning never surfaces at all.
     /// </remarks>
     internal static class InventoryNavigationPatches
     {
-        /// <summary>Set by <see cref="ModEntry.Entry"/> before patching, so <see cref="CheckPatched"/> can log.</summary>
+        /// <summary>Set by <see cref="ModEntry.Entry"/> before patching, so <see cref="Apply"/> can log.</summary>
         public static IMonitor? Monitor;
 
-        /// <summary>Skips <see cref="Farmer.shiftToolbar"/> entirely — see the class doc comment. Returning false means the original method never runs, so <c>Farmer.Items</c> is never rotated and none of vanilla's side effects (the "shwip" sound, <c>Toolbar.shifted</c>'s slide animation, the stowed-item reset) fire either; all of those only exist to sell the rotation that no longer happens.</summary>
-        [HarmonyPrefix]
-        [HarmonyPatch(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })]
-        private static bool Farmer_ShiftToolbar_Prefix()
+        /// <summary>Patches <see cref="Farmer.shiftToolbar"/> to a no-op — see the class doc comment for why this is applied imperatively rather than via <c>harmony.PatchAll</c>'s attribute scan. Called once from <see cref="ModEntry.Entry"/>, after <c>PatchAll</c> has applied every other patch in the mod.</summary>
+        public static void Apply(Harmony harmony)
         {
-            return false;
-        }
-
-        /// <summary>Logs whether the prefix above actually found and patched <see cref="Farmer.shiftToolbar"/>. Called once from <see cref="ModEntry.Entry"/> right after <c>harmony.PatchAll</c>. This is the diagnostic the class doc comment's 2026-09-12 remark refers to: if a future game version renames or re-shapes the method, this logs a warning naming exactly what's missing instead of the row-rotation bug silently coming back with nothing in the log to explain it.</summary>
-        public static void CheckPatched(Harmony harmony)
-        {
-            var method = AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) });
+            MethodBase? method = AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) });
             if (method is null)
             {
                 Monitor?.Log(
-                    "InventoryNavigationPatches: Farmer.shiftToolbar(bool) not found — the Harmony prefix has nothing to patch, so shoulder-button suppression in ModEntry.OnButtonPressed is now the only thing stopping row rotation (fine for gamepad play, but a keyboard's Tab key would still shift rows).",
+                    "InventoryNavigationPatches: Farmer.shiftToolbar(bool) not found — nothing to patch, so shoulder-button suppression in ModEntry.OnButtonPressed is now the only thing stopping row rotation (fine for gamepad play, but a keyboard's Tab key would still shift rows).",
                     LogLevel.Warn
                 );
                 return;
             }
 
-            bool patched = harmony.GetPatchedMethods().Contains(method);
-            Monitor?.Log(
-                patched
-                    ? "InventoryNavigationPatches: Farmer.shiftToolbar(bool) patched OK."
-                    : "InventoryNavigationPatches: Farmer.shiftToolbar(bool) found but Harmony didn't record it as patched — check for a PatchAll scanning issue.",
-                patched ? LogLevel.Trace : LogLevel.Warn
-            );
+            try
+            {
+                harmony.Patch(method, prefix: new HarmonyMethod(typeof(InventoryNavigationPatches), nameof(Farmer_ShiftToolbar_Prefix)));
+                Monitor?.Log("InventoryNavigationPatches: Farmer.shiftToolbar(bool) patched OK.", LogLevel.Trace);
+            }
+            catch (Exception ex)
+            {
+                Monitor?.Log(
+                    $"InventoryNavigationPatches: failed to patch Farmer.shiftToolbar(bool) — {ex.GetType().Name}: {ex.Message}. Shoulder-button suppression in ModEntry.OnButtonPressed is still stopping row rotation from a gamepad; a keyboard's Tab key would not be covered.",
+                    LogLevel.Error
+                );
+            }
+        }
+
+        /// <summary>Skips <see cref="Farmer.shiftToolbar"/> entirely — see the class doc comment. Returning false means the original method never runs, so <c>Farmer.Items</c> is never rotated and none of vanilla's side effects (the "shwip" sound, <c>Toolbar.shifted</c>'s slide animation, the stowed-item reset) fire either; all of those only exist to sell the rotation that no longer happens. Not attribute-patched — see <see cref="Apply"/>, which applies this method to <see cref="Farmer.shiftToolbar"/> imperatively.</summary>
+        private static bool Farmer_ShiftToolbar_Prefix()
+        {
+            return false;
         }
     }
 }

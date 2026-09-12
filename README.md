@@ -392,39 +392,54 @@ likely each is to have shifted:
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
 4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
-   backpack-navigation rework, revised once already after a real-device
-   test (2026-09-12) surfaced two problems the first version had:
-   - **Rows stayed active.** `Farmer.shiftToolbar(bool)` compiles fine
-     under `nameof`, but that only proves the *name* exists — it was never
-     checked against the decompiled source (no `vendor` access in the
-     sandbox that wrote it) that this is actually the overload/arity the
-     game calls for a controller shoulder press, and evidently it wasn't
-     doing anything. `ModEntry.Entry` now calls
-     `InventoryNavigationPatches.CheckPatched` right after `PatchAll`,
-     which logs a warning naming exactly this if the prefix ever finds
-     nothing to patch — check the SMAPI log first if rows come back.
-     Belt-and-suspenders fix: `ModEntry.OnButtonPressed` now also
-     suppresses the shoulder buttons directly (repurposed as a ±12 index
-     jump), which starves whatever method the game actually calls of
-     input regardless of what that method is named.
-   - **Triggers moved the selection by two slots per press, not one.**
-     SMAPI's `IInputHelper.Suppress` is unreliable for analog triggers
-     specifically — the base game can read the raw controller state
-     directly, bypassing the layer that only intercepts SMAPI's own input
-     APIs — so vanilla's own hotbar-only step could still land in the same
-     tick as this mod's, on top of it. Fixed by no longer setting
+   backpack-navigation rework, revised twice already after real-device
+   tests (both 2026-09-12) surfaced three problems in turn:
+   - **Rows stayed active** (1st test). Root cause turned out to need a
+     *second* test to pin down: a follow-up SMAPI log showed
+     `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
+     DOES find the method — the signature was right all along — but
+     `harmony.GetPatchedMethods()` didn't include it after
+     `harmony.PatchAll(Assembly.GetExecutingAssembly())`; the
+     attribute-based scan itself wasn't applying this one patch, for
+     reasons the log can't explain further (every other annotated patch in
+     the mod applied fine per the same log). Fixed by patching it
+     imperatively instead — `InventoryNavigationPatches.Apply` calls
+     `harmony.Patch(...)` directly from `ModEntry.Entry`, in its own
+     try/catch, logging either success or the real exception rather than
+     leaving PatchAll's internals a mystery. Independently,
+     `ModEntry.OnButtonPressed` also suppresses the shoulder buttons
+     directly (repurposed as a ±12 index jump) as a second line of
+     defense that doesn't depend on the Harmony patch at all.
+   - **Triggers moved the selection by two slots on every press** (1st
+     test fix). SMAPI's `IInputHelper.Suppress` is unreliable for analog
+     triggers specifically — the base game can read the raw controller
+     state directly, bypassing the layer that only intercepts SMAPI's own
+     input APIs — so vanilla's own hotbar-only step could still land in
+     the same tick as this mod's, on top of it. Fixed by no longer setting
      `CurrentToolIndex` immediately from the button-press handler at all;
      `ModEntry.RequestCycle` only records the intended index, and
      `ModEntry.ReassertDesiredToolIndex` forces it back onto
      `CurrentToolIndex` once a tick for a few ticks after each press
      (`ReassertTicks`), so the end state after that window is correct
      regardless of whether vanilla reacted zero, one, or two times to the
-     same press. Cancelled early by a fresh app-originated tap so it never
-     fights a `POST /select` that lands mid-window.
+     same press.
+   - **Triggers occasionally skipped one slot** (2nd test, after the fix
+     above shipped): most presses moved cleanly by one, but a capture
+     showed a couple of presses jumping by two. Frame-by-frame analysis of
+     the capture's selection-box position traced it to `OnButtonPressed`
+     itself firing twice for one physical squeeze — a documented
+     characteristic of thresholding a continuous analog trigger value into
+     a digital press/release — which `RequestCycle`'s "stack onto whatever
+     index is already pending" design (needed so genuinely rapid presses
+     add up correctly) then read as two real presses. Fixed with a
+     debounce (`_lastAcceptedPressTick`, `DebounceTicks`): a press landing
+     within 4 ticks (~65ms) of the last one actually accepted is dropped —
+     well above where the jitter landed in the capture, well below any
+     human's fastest deliberate repeat press.
    - The `"toolSwap"` cue name passed to `Game1.playSound` on each step
      is the one vanilla uses for tool switching; if it's wrong you'd get
      a silent (or logged-error) swap, not a crash. Unconfirmed either way
-     by the 2026-09-12 test.
+     by either test.
 
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written

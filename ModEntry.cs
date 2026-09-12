@@ -33,6 +33,12 @@ namespace StardewDS
         /// <summary>How many ticks (~<c>1000/60</c>ms apiece) to keep re-applying <see cref="_desiredToolIndex"/> after each trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for what this is guarding against; 3 is a handful of frames — long enough to win against a same-press vanilla reaction landing a tick or two late, short enough that it never fights a later, legitimate change (an app tap, a different button) for more than an eyeblink.</summary>
         private const int ReassertTicks = 3;
 
+        /// <summary><see cref="Game1.ticks"/> value at the last trigger/shoulder press <see cref="OnButtonPressed"/> actually accepted. See <see cref="DebounceTicks"/> for what this guards against.</summary>
+        private int _lastAcceptedPressTick = int.MinValue;
+
+        /// <summary>Minimum gap, in game ticks, between two accepted trigger/shoulder presses — see <see cref="OnButtonPressed"/>'s doc comment for the real-device evidence this is fixing. 4 ticks (~65ms at 60 ticks/sec) is comfortably above a same-press analog-trigger jitter re-fire (landed within 0-1 ticks in the capture that surfaced this) and comfortably below any human's fastest deliberate repeat presses (well over 100ms apart even mashing).</summary>
+        private const int DebounceTicks = 4;
+
         /*********
         ** Public methods
         *********/
@@ -45,7 +51,7 @@ namespace StardewDS
 
             Harmony harmony = new(this.ModManifest.UniqueID);
             harmony.PatchAll(Assembly.GetExecutingAssembly());
-            InventoryNavigationPatches.CheckPatched(harmony);
+            InventoryNavigationPatches.Apply(harmony);
 
             this._server = new CompanionServer(this.Monitor, Port, this.OnSelectRequested, this.OnMoveRequested, this.OnOrganizeRequested, this.OnOpenJournalRequested);
 
@@ -194,11 +200,28 @@ namespace StardewDS
         /// reason <see cref="InventoryNavigationPatches"/>'s Harmony prefix
         /// turned out not to be enough on its own: it works regardless of
         /// which method the game routes these buttons through, and doesn't
-        /// depend on guessing the right one. A real-device test (see
-        /// <see cref="RequestCycle"/>'s doc comment) showed that suppression
-        /// alone isn't fully reliable for the *trigger* buttons specifically
-        /// either, which is what <see cref="RequestCycle"/>'s reassert
-        /// window is for.
+        /// depend on guessing the right one.
+        ///
+        /// Two real-device tests found two distinct problems with what
+        /// this method used to do (set <c>CurrentToolIndex</c> directly, no
+        /// debounce): the first showed the trigger buttons moving the
+        /// selection by two slots on every single press — see
+        /// <see cref="RequestCycle"/>'s doc comment for that fix (a reassert
+        /// window instead of an immediate set). The second, after that fix
+        /// shipped, showed most presses moving cleanly by one slot but an
+        /// occasional press still skipping one — frame-by-frame analysis of
+        /// a capture showed the skipped presses landing within a tick or
+        /// two of the previous one, consistent with SMAPI's analog-trigger
+        /// edge detection firing <em>this event itself</em> twice for one
+        /// physical squeeze (a documented characteristic of thresholding a
+        /// continuous analog value into a digital press/release), which
+        /// <see cref="RequestCycle"/>'s "stack onto whatever's already
+        /// pending" design then read as two genuine rapid presses. The
+        /// debounce below (<see cref="_lastAcceptedPressTick"/>,
+        /// <see cref="DebounceTicks"/>) rejects a second press landing
+        /// implausibly soon after the last one actually accepted — well
+        /// under any human's fastest deliberate repeat press, comfortably
+        /// above where that jitter landed in the capture.
         ///
         /// Only during normal gameplay (<see cref="Context.IsPlayerFree"/>).
         /// In menus these buttons page between inventory/crafting tabs,
@@ -220,7 +243,16 @@ namespace StardewDS
             if (delta == 0)
                 return;
 
+            // Always suppress, even a press this tick's debounce is about
+            // to reject below — an un-suppressed press could still reach
+            // vanilla's own (bypassed-by-suppression-failures-aside)
+            // handling of these buttons.
             this.Helper.Input.Suppress(e.Button);
+
+            if (Game1.ticks - this._lastAcceptedPressTick < DebounceTicks)
+                return;
+            this._lastAcceptedPressTick = Game1.ticks;
+
             this.RequestCycle(delta);
         }
 
