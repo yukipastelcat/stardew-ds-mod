@@ -66,12 +66,26 @@ What it does once running:
   The trigger buttons are left unsuppressed — confirmed by a real-device
   log to have zero effect on them on this platform — but their vanilla
   step is still corrected: `ModEntry.OnButtonPressed`/`RequestCycle` let
-  vanilla's own `%12` write happen, then overwrite it a moment later
-  (`ReassertDesiredToolIndex`) with the equivalent step across the full
-  `MaxItems` range instead. See **4b** for the four-round real-device
-  history that landed on this design — including two rounds that
-  misdiagnosed this mod's own code (stacking an extra step on top of
-  vanilla's) as vanilla or SMAPI misbehaving.
+  vanilla's own `%12` write happen, then `ModEntry.SyncAuthoritativeToolIndex`
+  overwrites it with the equivalent step across the full `MaxItems` range
+  instead — every single tick, indefinitely, not just for a few ticks
+  after each press (an earlier, bounded-window version of this looked
+  right until a longer real-device test showed vanilla's `%12` step
+  reacting to whatever's in the field on whatever press comes next, no
+  matter how long after the mod's last correction that is). See **4b**
+  for the five-round real-device history that landed on this design —
+  including two rounds that misdiagnosed this mod's own code (stacking an
+  extra step on top of vanilla's) as vanilla or SMAPI misbehaving, and one
+  that fixed the double-jump but not the resulting drift once the
+  reassert window closed. `CurrentToolIndex` is now permanently mod-owned
+  from the moment a save loads: every tick, whatever doesn't match the
+  mod's own last-known-good index gets forced back to it, regardless of
+  source. On this mod's actual target (an Android touchscreen handheld,
+  gamepad-only) that source is always vanilla's own `%12` trigger step —
+  but the mechanism can't tell that apart from a legitimate keyboard
+  number-key press or mouse-wheel scroll on desktop, so either of those
+  would also get silently overridden back to whatever the mod last set.
+  A real limitation, not a currently-observed bug.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -394,7 +408,7 @@ likely each is to have shifted:
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
 4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
-   backpack-navigation rework, revised across four real-device tests
+   backpack-navigation rework, revised across five real-device tests
    (all 2026-09-12):
    - **Rows stayed active** (1st test). A follow-up SMAPI log pinned this
      down: `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
@@ -415,9 +429,10 @@ likely each is to have shifted:
      handles shoulder presses, since `shiftToolbar` never runs any more.
    - **Triggers moved the selection by two slots on every press, then
      occasionally by two after a first fix, then correctly by one but
-     capped at slot 11** (1st through 4th tests — the actual sequence of
-     misdiagnoses is worth reading in full, since each one looked like a
-     complete fix until the next test):
+     capped at slot 11, then correctly past slot 11 for a while before
+     silently reverting to capped** (1st through 5th tests — the actual
+     sequence of misdiagnoses is worth reading in full, since each one
+     looked like a complete fix until the next, longer test disproved it):
      1. Setting `CurrentToolIndex` immediately from `OnButtonPressed`
         moved the selection by two every press. Diagnosed (wrongly, as it
         turned out) as `IInputHelper.Suppress` being unreliable for
@@ -444,16 +459,34 @@ likely each is to have shifted:
         `(current + delta) % 12` — correct arithmetic, but still capped at
         the old twelve-slot hotbar boundary (`CurrentToolIndex changed
         11 -> 0`), since that arithmetic has nothing to do with
-        `shiftToolbar`. Fixed by putting triggers back through
-        `RequestCycle`/`ReassertDesiredToolIndex` — the same mechanism
-        shoulders use — but never calling `Suppress` on them (confirmed
-        pointless by test 3). The mechanism works *because* vanilla's
-        write is now understood to be deterministic: it writes its own
-        12-capped result, and the reassert overwrites it a tick later with
-        the correct value across the full `MaxItems` range.
-     Net: two of the four tests were chasing a bug that was actually this
-     mod's own code stacking a step on top of vanilla's, and one was
-     chasing a bug that was actually the debounce, described next.
+        `shiftToolbar`. Fixed by putting triggers back through a reassert
+        mechanism — but a SHORT, bounded one (a few ticks after each
+        press, then the field went unprotected again).
+     5. A longer real-device log of that version showed the wrap coming
+        back, on a delay: the short reassert window closed a few ticks
+        after each press as designed, the corrected value (say, `12`) sat
+        unprotected in between presses — which were 11-29 ticks apart in
+        that log, far outside a 3-tick window — and the moment the NEXT
+        press arrived, vanilla read whatever was sitting there and applied
+        its bare `%12` with no regard for magnitude: `(12 + 1) % 12` is
+        `1`, not `13`. A bounded window can't beat that, because vanilla's
+        step doesn't run on a timer this mod can simply outlast — it fires
+        on whatever press comes next, arbitrarily long after the mod's
+        last correction. Fixed by making the correction permanent:
+        `ModEntry.SyncAuthoritativeToolIndex` now runs every tick,
+        indefinitely, forcing `CurrentToolIndex` back to the mod's own
+        `_desiredToolIndex` for as long as the game is running — not just
+        for a few ticks after a press. `RequestCycle` computes its next
+        step from that same persistent `_desiredToolIndex`, so it's
+        immune to whatever vanilla wrote to the live field in between.
+     The mechanism works *because* vanilla's write is now fully
+     understood to be deterministic: it always writes its own 12-capped
+     result when it next processes a trigger press, and the permanent
+     sync always overwrites that before the next frame renders.
+     Net: two of the five tests were chasing a bug that was actually this
+     mod's own code stacking a step on top of vanilla's, one was chasing
+     a bug that was actually the debounce (below), and one fixed the
+     double-jump without fixing the drift a closed window still allowed.
    - The debounce bug test 3's log exposed: `_lastAcceptedPressTick`
      started at `int.MinValue`, and `Game1.ticks - int.MinValue` overflows
      (the true result exceeds `int.MaxValue`), wrapping to a huge negative
@@ -463,7 +496,7 @@ likely each is to have shifted:
      accepted press, rather than using an `int` sentinel value at all.
    - `ModEntry.DebugLogToolIndexChanges` — watches `Farmer.CurrentToolIndex`
      independent of anything else in this file, logging every change
-     regardless of source. This is what actually cracked tests 3 and 4;
+     regardless of source. This is what actually cracked tests 3 through 5;
      worth keeping in place (it's cheap, `Debug`-level) rather than
      stripping it back out now that the immediate bug is fixed.
    - The `"toolSwap"` cue name passed to `Game1.playSound` on each

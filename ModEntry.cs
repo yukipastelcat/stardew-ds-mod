@@ -24,14 +24,8 @@ namespace StardewDS
         private bool _pendingOrganize;
         private bool _pendingOpenJournal;
 
-        /// <summary>How many further <see cref="OnUpdateTicked"/> calls will keep re-applying <see cref="_desiredToolIndex"/> after a trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for why one shot isn't enough. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one and <see cref="_desiredToolIndex"/> are only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
-        private int _reassertTicksRemaining;
-
-        /// <summary>The slot index <see cref="RequestCycle"/> last computed from a trigger/shoulder press, re-applied every tick while <see cref="_reassertTicksRemaining"/> is still positive. <see langword="null"/> once that window has elapsed (or been cancelled by a fresher app-originated selection — see <see cref="OnUpdateTicked"/>).</summary>
+        /// <summary>The authoritative slot index once trigger/shoulder navigation has taken over — forced back onto <see cref="Farmer.CurrentToolIndex"/> EVERY tick, indefinitely, not just for a few ticks after the last press (see <see cref="SyncAuthoritativeToolIndex"/>'s remarks for why a bounded window turned out not to work). <see langword="null"/> only before the very first tick this session has a chance to adopt a baseline. Not guarded by <see cref="_pendingLock"/> — unlike the fields above, this one is only ever touched from SMAPI's own main-thread events, never from the companion server's background thread.</summary>
         private int? _desiredToolIndex;
-
-        /// <summary>How many ticks (~<c>1000/60</c>ms apiece) to keep re-applying <see cref="_desiredToolIndex"/> after each trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for what this is guarding against; 3 is a handful of frames — long enough to win against a same-press vanilla reaction landing a tick or two late (confirmed by real-device logs to typically land within 0-1 ticks), short enough that it never fights a later, legitimate change (an app tap, a different button) for more than an eyeblink.</summary>
-        private const int ReassertTicks = 3;
 
         /// <summary><see cref="Game1.ticks"/> value at the last trigger/shoulder press <see cref="OnButtonPressed"/> actually accepted, or <see langword="null"/> before the first one. See <see cref="DebounceTicks"/> for what this guards against, and <see cref="OnButtonPressed"/>'s remarks for why this needs to be nullable rather than a sentinel <c>int</c> value.</summary>
         private int? _lastAcceptedPressTick;
@@ -92,7 +86,7 @@ namespace StardewDS
             this._server?.Start();
         }
 
-        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), re-asserts any slot the shoulder buttons just cycled to (see <see cref="ReassertDesiredToolIndex"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
+        /// <summary>Raised once per game tick -- force-removes the toolbar/clock from <c>Game1.onScreenMenus</c> as a backstop to the Harmony draw() prefixes in <see cref="HudPatches"/>, strips the vanilla stamina "sweat" droplet particles from <c>Game1.uiOverlayTempSprites</c> now that the bar they sit next to is hidden (see <see cref="HudBarPatches"/>), keeps <c>CurrentToolIndex</c> pinned to whatever trigger/shoulder navigation or the app last selected (see <see cref="SyncAuthoritativeToolIndex"/>), applies any pending item-selection/move/organize request from the app, and republishes the current state snapshot for the companion server to serve. Does not touch <c>Game1.options.hardwareCursor</c>, which is left entirely to the player.</summary>
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
         {
             if (Context.IsWorldReady)
@@ -170,13 +164,14 @@ namespace StardewDS
                         Game1.uiOverlayTempSprites.RemoveAt(i);
                 }
 
-                // Order matters: an app tap should always win over a
-                // trigger/shoulder cycle still in its reassert window (see
-                // ReassertDesiredToolIndex's doc comment), so apply the
-                // app's request first and only reassert afterward if the
-                // app didn't just pick something itself this tick.
+                // Order matters: an app tap should always win over
+                // whatever trigger/shoulder navigation was last protecting
+                // (see SyncAuthoritativeToolIndex's doc comment), so apply
+                // the app's request first and let the sync adopt it as the
+                // new baseline afterward rather than fighting to restore
+                // the old one.
                 bool appSelected = this.ApplyPendingSelection();
-                this.ReassertDesiredToolIndex(cancelled: appSelected);
+                this.SyncAuthoritativeToolIndex(appSelected);
                 this.ApplyPendingMove();
                 this.ApplyPendingOrganize();
                 this.ApplyPendingOpenJournal();
@@ -190,11 +185,10 @@ namespace StardewDS
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
         }
 
-        /// <summary>Raised after the player returns to the title screen — drops any not-yet-re-asserted trigger/shoulder cycle (see <see cref="ReassertDesiredToolIndex"/>) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
+        /// <summary>Raised after the player returns to the title screen — clears the authoritative tool index baseline (see <see cref="SyncAuthoritativeToolIndex"/>, which will adopt whatever's current the next time a save loads, rather than trying to force a value left over from the last save) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
             this._desiredToolIndex = null;
-            this._reassertTicksRemaining = 0;
             this._server?.UpdateSnapshot(null);
         }
 
@@ -210,11 +204,11 @@ namespace StardewDS
         ///    slots. The working theory then was that
         ///    <c>IInputHelper.Suppress</c> was "unreliable" for analog
         ///    triggers, letting vanilla's own step land on top of ours.
-        /// 2. Deferring the write to a short reassert window (see
-        ///    <see cref="RequestCycle"/>/<see cref="ReassertDesiredToolIndex"/>)
-        ///    mostly fixed it, but a capture showed the occasional press
-        ///    still skipping a slot — attributed at the time to SMAPI
-        ///    double-firing the press event itself, "fixed" with a
+        /// 2. Deferring the write to a short reassert window (forcing the
+        ///    corrected value back for a few ticks, rather than setting it
+        ///    once) mostly fixed it, but a capture showed the occasional
+        ///    press still skipping a slot — attributed at the time to
+        ///    SMAPI double-firing the press event itself, "fixed" with a
         ///    debounce.
         /// 3. A log from a session with debug logging (added specifically
         ///    to investigate further) turned out to show every single
@@ -234,26 +228,36 @@ namespace StardewDS
         ///    the old twelve-slot hotbar, but still capped there
         ///    (`CurrentToolIndex changed 11 -> 0`) even with row rotation
         ///    disabled, since that arithmetic has nothing to do with
-        ///    <see cref="Farmer.shiftToolbar"/>.
+        ///    <see cref="Farmer.shiftToolbar"/>. Fixed by bringing triggers
+        ///    back through a reassert mechanism (as in round 2) — but that
+        ///    one still used a SHORT, few-tick window.
+        /// 5. A real-device log of THAT version showed the wrap was still
+        ///    coming back, on a delay: the reassert window closed a few
+        ///    ticks after each press (as designed), the corrected value
+        ///    sat unprotected in between presses (which were 11-29 ticks
+        ///    apart in that log — human-paced, far outside a 3-tick
+        ///    window), and the moment the NEXT press arrived, vanilla read
+        ///    whatever was sitting there (say, 12) and applied its bare
+        ///    `%12` regardless of magnitude — `(12 + 1) % 12` is `1`, not
+        ///    `13`. A bounded window can't work against that: vanilla's
+        ///    step isn't on a clock this mod can outlast, it fires on
+        ///    whatever press comes next, arbitrarily long after the last
+        ///    correction. So the fix is to never stop correcting — see
+        ///    <see cref="SyncAuthoritativeToolIndex"/>, called every tick
+        ///    indefinitely rather than for a few ticks after a press.
         ///
-        /// So triggers are back to going through <see cref="RequestCycle"/>
-        /// / <see cref="ReassertDesiredToolIndex"/> — the SAME reassert-window
-        /// mechanism shoulders already used — just without ever calling
+        /// So triggers go through <see cref="RequestCycle"/> /
+        /// <see cref="SyncAuthoritativeToolIndex"/> — the same permanent
+        /// mechanism shoulders use — just without ever calling
         /// <c>Suppress</c> on them (confirmed pointless by round 3, and
-        /// removed rather than left in as inert dead weight). The
-        /// mechanism works BECAUSE vanilla's own write is deterministic and
-        /// well-understood now, not despite it: vanilla writes its own
-        /// (12-capped) result to <c>CurrentToolIndex</c> when it processes
-        /// the press, and our own reassert — which runs at the end of the
-        /// SAME game tick, after vanilla's <c>Update</c> has already run —
-        /// overwrites that with the correct full-range value a moment
-        /// later. <see cref="RequestCycle"/>'s own base-index calculation
-        /// (<c>_desiredToolIndex ?? player.CurrentToolIndex</c>) is what
-        /// keeps this stable across repeated presses: as long as the
-        /// previous press's reassert window is still holding our corrected
-        /// value in place when the next press's vanilla-write briefly
-        /// clobbers it, the next press computes from OUR last known-good
-        /// index rather than vanilla's clobbered one.
+        /// removed rather than left in as inert dead weight). It works
+        /// BECAUSE vanilla's own write is now fully understood: it writes
+        /// its own (12-capped) result to <c>CurrentToolIndex</c> whenever
+        /// it next processes a trigger press, no matter how long after our
+        /// last correction that is, and <see cref="SyncAuthoritativeToolIndex"/>
+        /// — called every single tick, forever, not just after our own
+        /// presses — overwrites that with the correct full-range value
+        /// before the next frame renders.
         ///
         /// Shoulders remain unaffected by any of this: their own vanilla
         /// action (<see cref="Farmer.shiftToolbar"/>) is confirmed actually
@@ -261,7 +265,7 @@ namespace StardewDS
         /// vanilla write competing with ours there at all — suppression
         /// (still applied to the shoulder buttons specifically, as
         /// defense-in-depth alongside the Harmony patch) and the shared
-        /// reassert mechanism are the entire story for those.
+        /// permanent-sync mechanism are the entire story for those.
         ///
         /// Only during normal gameplay (<see cref="Context.IsPlayerFree"/>).
         /// In menus these buttons page between inventory/crafting tabs,
@@ -330,7 +334,7 @@ namespace StardewDS
             this.RequestCycle(delta, playSwapSound);
         }
 
-        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="ReassertDesiredToolIndex"/> to actually apply (and keep re-applying for a few ticks — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked.</summary>
+        /// <summary>Records a request to step the selected slot <paramref name="delta"/> places through the player's unlocked backpack, wrapping at both ends, for <see cref="SyncAuthoritativeToolIndex"/> to actually apply (and keep re-applying forever — see that method). The bound is <c>MaxItems</c> — the same number the app locks its grid at (see <c>GameStateSnapshot.Capture</c>'s <c>BackpackSize</c>) — so this can only ever land on a slot the app is already drawing as unlocked.</summary>
         /// <remarks>
         /// This does NOT set <see cref="Farmer.CurrentToolIndex"/> directly
         /// — an early version of this file did, immediately, from inside
@@ -338,28 +342,31 @@ namespace StardewDS
         /// version showed the selection moving by two slots per press
         /// instead of one.
         ///
-        /// Deferring the write to <see cref="ReassertDesiredToolIndex"/>
-        /// (forced once a tick for a few ticks, rather than set once here)
+        /// Deferring the write to <see cref="SyncAuthoritativeToolIndex"/>
         /// is what makes this safe regardless of what else touches
         /// <c>CurrentToolIndex</c> in between: for the triggers, that's
         /// vanilla's own (unsuppressed — see <see cref="OnButtonPressed"/>'s
         /// remarks) 12-slot-capped step, which still runs and still writes
-        /// its own (wrong, capped) result to the field; our reassert simply
-        /// overwrites it a moment later with this method's full-range
-        /// result. For the shoulders, <see cref="Farmer.shiftToolbar"/> is
-        /// confirmed patched out, so there's nothing competing with our
-        /// write there at all — the same deferred-write mechanism still
-        /// applies, just with nothing to actually overwrite.
+        /// its own (wrong, capped) result to the field; the sync simply
+        /// overwrites it with this method's full-range result. A real
+        /// device test (2026-09-12) of an EARLIER version of this pair —
+        /// which only re-applied the corrected value for a few ticks after
+        /// each press, then let the field go unprotected — showed exactly
+        /// why that wasn't enough: vanilla's `%12` step doesn't run on a
+        /// timer, it runs on the NEXT press, however long after our
+        /// correction that is (11-29 ticks apart in that log, versus a
+        /// 3-tick reassert window), and it wraps whatever's sitting in the
+        /// field with no regard for its magnitude — `(12 + 1) % 12` really
+        /// is `1`, not `13`. So the field has to be permanently protected,
+        /// not just briefly after each press — see
+        /// <see cref="SyncAuthoritativeToolIndex"/>.
         ///
-        /// The *intent* is recorded here (this field, plus
-        /// <see cref="_reassertTicksRemaining"/> reset to
-        /// <see cref="ReassertTicks"/>), computed from whatever
-        /// <see cref="_desiredToolIndex"/> already holds if a previous
-        /// press's reassert window is still running (so several quick
-        /// presses stack correctly instead of each reading a
-        /// possibly-already-stale <c>CurrentToolIndex</c> — which, for
-        /// triggers, may itself hold vanilla's just-written capped value
-        /// rather than ours).
+        /// The *intent* is recorded here, computed from whatever
+        /// <see cref="_desiredToolIndex"/> already holds (so several quick
+        /// presses stack correctly instead of each reading a possibly
+        /// vanilla-clobbered live <c>CurrentToolIndex</c> — which, for
+        /// triggers, could hold vanilla's just-written capped value rather
+        /// than ours if read directly).
         /// </remarks>
         private void RequestCycle(int delta, bool playSwapSound)
         {
@@ -375,12 +382,11 @@ namespace StardewDS
             int next = ((baseIndex + delta) % capacity + capacity) % capacity;
 
             this.Monitor.Log(
-                $"[Nav] press #{this._debugAcceptedPressCount} RequestCycle: baseIndex={baseIndex} (from {(this._desiredToolIndex is int ? "pending desired" : "live CurrentToolIndex")}) delta={delta} capacity={capacity} -> next={next}.",
+                $"[Nav] press #{this._debugAcceptedPressCount} RequestCycle: baseIndex={baseIndex} (from {(this._desiredToolIndex is int ? "authoritative" : "live CurrentToolIndex")}) delta={delta} capacity={capacity} -> next={next}.",
                 LogLevel.Debug
             );
 
             this._desiredToolIndex = next;
-            this._reassertTicksRemaining = ReassertTicks;
 
             // See OnButtonPressed's call site for why this is conditional
             // now — vanilla already plays its own tool-switch sound for
@@ -389,54 +395,55 @@ namespace StardewDS
                 Game1.playSound("toolSwap");
         }
 
-        /// <summary>Forces <see cref="Farmer.CurrentToolIndex"/> back to <see cref="_desiredToolIndex"/> once per tick for the next few ticks after a trigger or shoulder press — see <see cref="RequestCycle"/>'s doc comment for why. Cancelled early — before its window naturally runs out — whenever <paramref name="cancelled"/> is true, so a fresh app-originated tap (<see cref="ApplyPendingSelection"/>, applied first in <see cref="OnUpdateTicked"/>) isn't immediately stomped back to wherever the controller last pointed.</summary>
-        private void ReassertDesiredToolIndex(bool cancelled)
+        /// <summary>Keeps <see cref="Farmer.CurrentToolIndex"/> permanently pinned to <see cref="_desiredToolIndex"/> — called every tick, indefinitely, not just for a few ticks after a trigger/shoulder press. See <see cref="RequestCycle"/>'s doc comment for the real-device evidence that a bounded window doesn't work: vanilla's `%12` trigger step reacts to whatever's in the field on whatever press next comes along, no matter how long that is after this mod's last correction, so the only reliable fix is to never stop correcting.</summary>
+        /// <remarks>
+        /// Adopts the live <c>CurrentToolIndex</c> as the new authoritative
+        /// baseline — rather than fighting to restore an old one — in two
+        /// cases: <paramref name="appSelected"/> is true (a fresh
+        /// app-originated tap just landed this tick, via
+        /// <see cref="ApplyPendingSelection"/>, applied first in
+        /// <see cref="OnUpdateTicked"/>, so that new selection should win
+        /// and become the thing this method protects from here on), or
+        /// <see cref="_desiredToolIndex"/> is still <see langword="null"/>
+        /// (nothing has established a baseline yet — the very first tick
+        /// this runs each session, or right after
+        /// <see cref="OnReturnedToTitle"/> cleared it).
+        ///
+        /// Real limitation, not a currently-observed bug: this can't tell
+        /// vanilla's own unwanted trigger-driven write apart from any
+        /// OTHER way <c>CurrentToolIndex</c> might legitimately change
+        /// outside of <see cref="ApplyPendingSelection"/> — a keyboard
+        /// number-key press or mouse-wheel scroll on desktop, say — so any
+        /// of those would also get silently overridden back to whatever
+        /// this mod last set. Acceptable for this mod's actual target (an
+        /// Android touchscreen handheld, gamepad-only), where vanilla's
+        /// `%12` trigger step is the only other thing that ever touches
+        /// this field.
+        /// </remarks>
+        private void SyncAuthoritativeToolIndex(bool appSelected)
         {
-            if (cancelled)
+            if (Game1.player is not Farmer player)
+                return;
+
+            if (appSelected || this._desiredToolIndex is not int index || index < 0 || index >= player.MaxItems)
             {
-                if (this._desiredToolIndex is int cancelledIndex)
-                {
-                    this.Monitor.Log(
-                        $"[Nav] press #{this._debugAcceptedPressCount} reassert window CANCELLED at tick {Game1.ticks} (an app selection landed first this tick) — desired index {cancelledIndex} abandoned.",
-                        LogLevel.Debug
-                    );
-                }
-                this._desiredToolIndex = null;
-                this._reassertTicksRemaining = 0;
+                this._desiredToolIndex = player.CurrentToolIndex;
                 return;
             }
 
-            if (this._reassertTicksRemaining <= 0 || this._desiredToolIndex is not int index)
-                return;
-
-            if (Game1.player is Farmer player && index >= 0 && index < player.MaxItems)
+            // Logged BEFORE overwriting: a mismatch here means vanilla's
+            // own (unsuppressed) trigger handling wrote its own,
+            // 12-capped result since the last time this ran — exactly the
+            // drift this whole mechanism exists to correct, every single
+            // tick, forever. A match means this tick is a pure no-op.
+            if (player.CurrentToolIndex != index)
             {
-                // Logged BEFORE overwriting: a mismatch here means
-                // something else (most likely vanilla, un-suppressed)
-                // changed CurrentToolIndex since our last reassert —
-                // exactly the drift this whole mechanism exists to correct.
-                // A match means this tick's reassert is a pure no-op.
-                if (player.CurrentToolIndex != index)
-                {
-                    this.Monitor.Log(
-                        $"[Nav] press #{this._debugAcceptedPressCount} reassert CORRECTED drift at tick {Game1.ticks}: CurrentToolIndex was {player.CurrentToolIndex}, forcing back to {index} (ticksRemaining was {this._reassertTicksRemaining}).",
-                        LogLevel.Warn
-                    );
-                }
-                else
-                {
-                    this.Monitor.Log(
-                        $"[Nav] press #{this._debugAcceptedPressCount} reassert no-op at tick {Game1.ticks}: CurrentToolIndex already {index} (ticksRemaining was {this._reassertTicksRemaining}).",
-                        LogLevel.Trace
-                    );
-                }
-
+                this.Monitor.Log(
+                    $"[Nav] press #{this._debugAcceptedPressCount} sync CORRECTED drift at tick {Game1.ticks}: CurrentToolIndex was {player.CurrentToolIndex}, forcing back to {index}.",
+                    LogLevel.Warn
+                );
                 player.CurrentToolIndex = index;
             }
-
-            this._reassertTicksRemaining--;
-            if (this._reassertTicksRemaining <= 0)
-                this._desiredToolIndex = null;
         }
 
         /// <summary>Debug-only: logs <c>Farmer.CurrentToolIndex</c> whenever it changes from one tick to the next, tagged with the accepted-press counter so a SMAPI log can be read alongside a screenshot named by physical press count (see the counters' own doc comments). Called once per tick from <see cref="OnUpdateTicked"/>, after every other navigation step has had a chance to touch the index.</summary>
@@ -490,7 +497,7 @@ namespace StardewDS
             }
         }
 
-        /// <summary>Applies (on the main thread) the most recent pending selection request from the app, if any. Returns whether one was actually applied, so <see cref="OnUpdateTicked"/> knows to cancel any still-running trigger/shoulder reassert window (see <see cref="ReassertDesiredToolIndex"/>) rather than let it stomp this fresher choice back.</summary>
+        /// <summary>Applies (on the main thread) the most recent pending selection request from the app, if any. Returns whether one was actually applied, so <see cref="OnUpdateTicked"/> knows to let <see cref="SyncAuthoritativeToolIndex"/> adopt this fresher choice as its new baseline rather than fighting to restore whatever trigger/shoulder navigation was protecting before.</summary>
         private bool ApplyPendingSelection()
         {
             int? index;
