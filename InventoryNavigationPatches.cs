@@ -96,6 +96,14 @@ namespace StardewDS
         /// <summary>Skips <see cref="Farmer.shiftToolbar"/> entirely — see the class doc comment. Returning false means the original method never runs, so <c>Farmer.Items</c> is never rotated and none of vanilla's side effects (the "shwip" sound, <c>Toolbar.shifted</c>'s slide animation, the stowed-item reset) fire either; all of those only exist to sell the rotation that no longer happens. Not attribute-patched — see <see cref="Apply"/>, which applies this method to <see cref="Farmer.shiftToolbar"/> imperatively.</summary>
         private static bool Farmer_ShiftToolbar_Prefix()
         {
+            // Debug-only (2026-09-12 investigation): confirms at runtime,
+            // not just at Apply()-time, that the patch is actually in the
+            // call path — e.g. rules out the (extremely unlikely, but
+            // cheap to rule out given Apply()'s own success log wasn't
+            // enough to explain the first real-device failure) case of a
+            // JIT-inlined call to the original method bypassing Harmony's
+            // patched version.
+            Monitor?.Log("[Nav] Farmer.shiftToolbar prefix invoked — blocking row rotation.", LogLevel.Debug);
             return false;
         }
     }

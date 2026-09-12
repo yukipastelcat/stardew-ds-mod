@@ -39,6 +39,23 @@ namespace StardewDS
         /// <summary>Minimum gap, in game ticks, between two accepted trigger/shoulder presses — see <see cref="OnButtonPressed"/>'s doc comment for the real-device evidence this is fixing. 4 ticks (~65ms at 60 ticks/sec) is comfortably above a same-press analog-trigger jitter re-fire (landed within 0-1 ticks in the capture that surfaced this) and comfortably below any human's fastest deliberate repeat presses (well over 100ms apart even mashing).</summary>
         private const int DebounceTicks = 4;
 
+        // ---- Debug-only counters, added 2026-09-12 for real-device
+        // investigation (see DebugLogToolIndexChanges). None of these affect behavior —
+        // they exist purely so a SMAPI log can be lined up against a
+        // screenshot named by "how many controller presses so far": count
+        // physical presses on the device while watching the log, and the
+        // press number here should match. A mismatch is itself a finding
+        // (see each counter's own doc comment for what it isolates).
+
+        /// <summary>Every raw <c>SButton.LeftTrigger</c>/<c>RightTrigger</c>/<c>LeftShoulder</c>/<c>RightShoulder</c> <see cref="OnButtonPressed"/> event received, counted before the <see cref="DebounceTicks"/> filter runs. If this climbs faster than the player is physically pressing the button, SMAPI itself is delivering more than one event per physical press (the analog-trigger-jitter theory <see cref="RequestCycle"/>'s doc comment describes).</summary>
+        private int _debugRawEventCount;
+
+        /// <summary>Every raw event that survived the <see cref="DebounceTicks"/> filter and actually called <see cref="RequestCycle"/>. If THIS climbs slower than physical presses (falls behind <see cref="_debugRawEventCount"/> matching 1:1 with real presses), the debounce window is eating genuine presses, not just jitter — a real bug the debounce itself could introduce, distinct from the jitter it's meant to filter.</summary>
+        private int _debugAcceptedPressCount;
+
+        /// <summary>Last <c>Farmer.CurrentToolIndex</c> value logged by the per-tick change watcher in <see cref="OnUpdateTicked"/>, so that watcher logs only on an actual change instead of once per tick. <see langword="null"/> means nothing logged yet this session.</summary>
+        private int? _debugLastLoggedToolIndex;
+
         /*********
         ** Public methods
         *********/
@@ -163,6 +180,11 @@ namespace StardewDS
                 this.ApplyPendingMove();
                 this.ApplyPendingOrganize();
                 this.ApplyPendingOpenJournal();
+
+                // Debug-only (2026-09-12 investigation) — see the method's
+                // own doc comment. Runs last so it reports whatever the
+                // index actually ended up at after every other step above.
+                this.DebugLogToolIndexChanges();
             }
 
             this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
@@ -249,9 +271,23 @@ namespace StardewDS
             // handling of these buttons.
             this.Helper.Input.Suppress(e.Button);
 
-            if (Game1.ticks - this._lastAcceptedPressTick < DebounceTicks)
+            this._debugRawEventCount++;
+            int gap = Game1.ticks - this._lastAcceptedPressTick;
+            if (gap < DebounceTicks)
+            {
+                this.Monitor.Log(
+                    $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — REJECTED by debounce (gap {gap} < {DebounceTicks} ticks since last accepted press #{this._debugAcceptedPressCount}).",
+                    LogLevel.Debug
+                );
                 return;
+            }
             this._lastAcceptedPressTick = Game1.ticks;
+
+            this._debugAcceptedPressCount++;
+            this.Monitor.Log(
+                $"[Nav] raw event #{this._debugRawEventCount} {e.Button} at tick {Game1.ticks} — ACCEPTED as press #{this._debugAcceptedPressCount} (gap {gap} ticks), CurrentToolIndex before={Game1.player?.CurrentToolIndex.ToString() ?? "null"}.",
+                LogLevel.Debug
+            );
 
             this.RequestCycle(delta);
         }
@@ -297,6 +333,11 @@ namespace StardewDS
             int baseIndex = this._desiredToolIndex ?? player.CurrentToolIndex;
             int next = ((baseIndex + delta) % capacity + capacity) % capacity;
 
+            this.Monitor.Log(
+                $"[Nav] press #{this._debugAcceptedPressCount} RequestCycle: baseIndex={baseIndex} (from {(this._desiredToolIndex is int ? "pending desired" : "live CurrentToolIndex")}) delta={delta} capacity={capacity} -> next={next}.",
+                LogLevel.Debug
+            );
+
             this._desiredToolIndex = next;
             this._reassertTicksRemaining = ReassertTicks;
             Game1.playSound("toolSwap");
@@ -307,6 +348,13 @@ namespace StardewDS
         {
             if (cancelled)
             {
+                if (this._desiredToolIndex is int cancelledIndex)
+                {
+                    this.Monitor.Log(
+                        $"[Nav] press #{this._debugAcceptedPressCount} reassert window CANCELLED at tick {Game1.ticks} (an app selection landed first this tick) — desired index {cancelledIndex} abandoned.",
+                        LogLevel.Debug
+                    );
+                }
                 this._desiredToolIndex = null;
                 this._reassertTicksRemaining = 0;
                 return;
@@ -316,11 +364,47 @@ namespace StardewDS
                 return;
 
             if (Game1.player is Farmer player && index >= 0 && index < player.MaxItems)
+            {
+                // Logged BEFORE overwriting: a mismatch here means
+                // something else (most likely vanilla, un-suppressed)
+                // changed CurrentToolIndex since our last reassert —
+                // exactly the drift this whole mechanism exists to correct.
+                // A match means this tick's reassert is a pure no-op.
+                if (player.CurrentToolIndex != index)
+                {
+                    this.Monitor.Log(
+                        $"[Nav] press #{this._debugAcceptedPressCount} reassert CORRECTED drift at tick {Game1.ticks}: CurrentToolIndex was {player.CurrentToolIndex}, forcing back to {index} (ticksRemaining was {this._reassertTicksRemaining}).",
+                        LogLevel.Warn
+                    );
+                }
+                else
+                {
+                    this.Monitor.Log(
+                        $"[Nav] press #{this._debugAcceptedPressCount} reassert no-op at tick {Game1.ticks}: CurrentToolIndex already {index} (ticksRemaining was {this._reassertTicksRemaining}).",
+                        LogLevel.Trace
+                    );
+                }
+
                 player.CurrentToolIndex = index;
+            }
 
             this._reassertTicksRemaining--;
             if (this._reassertTicksRemaining <= 0)
                 this._desiredToolIndex = null;
+        }
+
+        /// <summary>Debug-only: logs <c>Farmer.CurrentToolIndex</c> whenever it changes from one tick to the next, tagged with the accepted-press counter so a SMAPI log can be read alongside a screenshot named by physical press count (see the counters' own doc comments). Called once per tick from <see cref="OnUpdateTicked"/>, after every other navigation step has had a chance to touch the index.</summary>
+        private void DebugLogToolIndexChanges()
+        {
+            int? current = Game1.player?.CurrentToolIndex;
+            if (current == this._debugLastLoggedToolIndex)
+                return;
+
+            this.Monitor.Log(
+                $"[Nav] CurrentToolIndex changed {this._debugLastLoggedToolIndex?.ToString() ?? "(none)"} -> {current?.ToString() ?? "(none)"} at tick {Game1.ticks} (after press #{this._debugAcceptedPressCount}).",
+                LogLevel.Debug
+            );
+            this._debugLastLoggedToolIndex = current;
         }
 
 
