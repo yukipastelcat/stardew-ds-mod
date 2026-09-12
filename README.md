@@ -55,23 +55,23 @@ What it does once running:
   twelve: the shift-toolbar button (shoulder buttons on a gamepad, "R" on
   the handheld) calls `Farmer.shiftToolbar`, which physically *rotates*
   `Farmer.Items` by twelve so a different twelve items sit in the hotbar,
-  and the trigger buttons step the selection by one within that same
-  twelve. The rotation is the one that actively fights the app (every item
-  in its grid appears to jump to a different slot while the selection
-  stays put), so `Farmer.shiftToolbar` is patched out entirely — and since
-  the shoulder buttons then have nothing left to do, they're suppressed
-  via SMAPI and repurposed as a ±12 index jump instead of going idle (see
-  "Known risk areas" **4b** for why that patch needed a second real-device
-  round to actually take, via imperative `harmony.Patch(...)` rather than
-  attribute scanning).
-  The trigger buttons are deliberately left alone — three real-device
-  rounds trying to intercept/reimplement them (suppress + reimplement,
-  then a reassert window, then a debounce) kept finding the trigger step
-  was already correct on its own, and each "fix" was actually this mod's
-  own code stacking an extra step on top of vanilla's un-suppressed one;
-  debug logging that watches `Farmer.CurrentToolIndex` independent of
-  anything this mod does confirmed it directly (see **4b** again). So
-  triggers get zero special handling now — vanilla owns them completely.
+  and the trigger buttons step the selection with a `(current + 1) % 12`
+  wrap that has nothing to do with `shiftToolbar` and keeps running even
+  with it patched out. `Farmer.shiftToolbar` is patched out entirely
+  (`InventoryNavigationPatches`, see "Known risk areas" **4b** for why that
+  needed a second real-device round to actually take, via imperative
+  `harmony.Patch(...)` rather than attribute scanning) and the shoulder
+  buttons — with nothing left to do once it is — are suppressed via SMAPI
+  and repurposed as a ±12 index jump instead of going idle.
+  The trigger buttons are left unsuppressed — confirmed by a real-device
+  log to have zero effect on them on this platform — but their vanilla
+  step is still corrected: `ModEntry.OnButtonPressed`/`RequestCycle` let
+  vanilla's own `%12` write happen, then overwrite it a moment later
+  (`ReassertDesiredToolIndex`) with the equivalent step across the full
+  `MaxItems` range instead. See **4b** for the four-round real-device
+  history that landed on this design — including two rounds that
+  misdiagnosed this mod's own code (stacking an extra step on top of
+  vanilla's) as vanilla or SMAPI misbehaving.
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -394,7 +394,7 @@ likely each is to have shifted:
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
 4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
-   backpack-navigation rework, revised across three real-device tests
+   backpack-navigation rework, revised across four real-device tests
    (all 2026-09-12):
    - **Rows stayed active** (1st test). A follow-up SMAPI log pinned this
      down: `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
@@ -407,46 +407,70 @@ likely each is to have shifted:
      imperatively instead — `InventoryNavigationPatches.Apply` calls
      `harmony.Patch(...)` directly from `ModEntry.Entry`, in its own
      try/catch, logging either success or the real exception — confirmed
-     working in the 3rd test's log (`"Farmer.shiftToolbar(bool) patched
-     OK"`, and the prefix itself logs each time it's actually invoked).
-     `ModEntry.OnButtonPressed` also suppresses the shoulder buttons
-     directly (repurposed as a ±12 index jump) as a second, independent
-     line of defense.
+     working from the 2nd test's log onward (`"Farmer.shiftToolbar(bool)
+     patched OK"`, and the prefix itself logs each time it's actually
+     invoked). `ModEntry.OnButtonPressed` also suppresses the shoulder
+     buttons directly (repurposed as a ±12 index jump) as a second,
+     independent line of defense — the only thing that ever actually
+     handles shoulder presses, since `shiftToolbar` never runs any more.
    - **Triggers moved the selection by two slots on every press, then
-     occasionally by two after a first fix** (1st and 2nd tests). Chased
-     across two rounds — a reassert window instead of an immediate
-     `CurrentToolIndex` set, then a debounce on top of that — before a
-     3rd-test SMAPI log settled what was actually going on. That log's
-     debounce had its own bug (see below) that rejected every single
-     trigger press that session, so `RequestCycle` never ran at all — and
-     `CurrentToolIndex` still advanced by exactly one per press anyway.
-     That's direct proof `IInputHelper.Suppress` has **zero** effect on
-     the trigger buttons on this platform (not "unreliable" — vanilla's
-     own handling was 100% in control throughout), and that vanilla's own
-     single-step trigger logic was already correct. The double-jumps and
-     skips in the first two tests were this mod's own step landing on top
-     of vanilla's the whole time, not vanilla misbehaving. Fixed by
-     removing all trigger handling from `OnButtonPressed` — the triggers
-     aren't suppressed, and `RequestCycle` is never called for them; they
-     go straight to vanilla, unmodified. What debug logging watching
-     `Farmer.CurrentToolIndex` independent of any of this (`ModEntry.DebugLogToolIndexChanges`)
-     shows next is the next thing to check — specifically, whether
-     vanilla's own step still wraps at slot 11 (its old hotbar-only
-     boundary) instead of continuing into the rest of the backpack now
-     that row rotation is disabled.
-   - The debounce bug the 3rd test's log exposed: `_lastAcceptedPressTick`
+     occasionally by two after a first fix, then correctly by one but
+     capped at slot 11** (1st through 4th tests — the actual sequence of
+     misdiagnoses is worth reading in full, since each one looked like a
+     complete fix until the next test):
+     1. Setting `CurrentToolIndex` immediately from `OnButtonPressed`
+        moved the selection by two every press. Diagnosed (wrongly, as it
+        turned out) as `IInputHelper.Suppress` being unreliable for
+        analog triggers, letting vanilla's own step land on top of ours.
+     2. Deferring the write to a reassert window (`RequestCycle` +
+        `ReassertDesiredToolIndex`, forcing the value back for a few ticks
+        rather than setting it once) mostly fixed it, but a capture showed
+        an occasional press still skipping a slot — diagnosed (also
+        wrongly) as SMAPI double-firing the press event for one physical
+        squeeze, "fixed" with a debounce.
+     3. A log from a session with debug logging (added to investigate
+        further) showed every single trigger press being silently
+        rejected that whole session by a bug in that debounce (see next
+        bullet) — meaning `RequestCycle` never ran for triggers at all —
+        and yet `CurrentToolIndex` still advanced by exactly one per press
+        anyway. Direct proof `Suppress` has **zero** effect on the trigger
+        buttons on this platform (not "unreliable" — vanilla's own
+        handling was 100% in control through all three tests so far), and
+        that vanilla's own single-step trigger logic was already correct
+        on its own. Concluded: stop fighting it, remove all trigger
+        handling from `OnButtonPressed` entirely.
+     4. That "stop fighting it" version's own log showed exactly why that
+        wasn't the full fix: vanilla's step is genuinely
+        `(current + delta) % 12` — correct arithmetic, but still capped at
+        the old twelve-slot hotbar boundary (`CurrentToolIndex changed
+        11 -> 0`), since that arithmetic has nothing to do with
+        `shiftToolbar`. Fixed by putting triggers back through
+        `RequestCycle`/`ReassertDesiredToolIndex` — the same mechanism
+        shoulders use — but never calling `Suppress` on them (confirmed
+        pointless by test 3). The mechanism works *because* vanilla's
+        write is now understood to be deterministic: it writes its own
+        12-capped result, and the reassert overwrites it a tick later with
+        the correct value across the full `MaxItems` range.
+     Net: two of the four tests were chasing a bug that was actually this
+     mod's own code stacking a step on top of vanilla's, and one was
+     chasing a bug that was actually the debounce, described next.
+   - The debounce bug test 3's log exposed: `_lastAcceptedPressTick`
      started at `int.MinValue`, and `Game1.ticks - int.MinValue` overflows
      (the true result exceeds `int.MaxValue`), wrapping to a huge negative
      number that's always less than the debounce window — silently
      rejecting every press forever. Fixed by making the field nullable
      (`int?`) and skipping the subtraction entirely before the first
      accepted press, rather than using an `int` sentinel value at all.
-     Since triggers no longer use this debounce, only shoulder-button
-     presses go through it now.
+   - `ModEntry.DebugLogToolIndexChanges` — watches `Farmer.CurrentToolIndex`
+     independent of anything else in this file, logging every change
+     regardless of source. This is what actually cracked tests 3 and 4;
+     worth keeping in place (it's cheap, `Debug`-level) rather than
+     stripping it back out now that the immediate bug is fixed.
    - The `"toolSwap"` cue name passed to `Game1.playSound` on each
      shoulder-button step is the one vanilla uses for tool switching; if
      it's wrong you'd get a silent (or logged-error) swap, not a crash.
-     Unconfirmed either way so far.
+     Unconfirmed either way so far. (Triggers don't need this — vanilla
+     still processes them and plays its own switch sound.)
 
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
