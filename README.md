@@ -48,6 +48,53 @@ What it does once running:
   menu calls after you check "Hardware Cursor"), which is why an earlier
   version of this fix (setting the option without calling that method)
   didn't actually make the cursor appear.
+- Takes the backpack's vanilla "rows of 12" behaviour out of the game
+  entirely, so the slot the app highlights and the slot the game has
+  equipped can never disagree (`InventoryNavigationPatches.cs` +
+  `ModEntry.OnButtonPressed`). Vanilla splits the backpack into pages of
+  twelve: the shift-toolbar button (shoulder buttons on a gamepad, "R" on
+  the handheld) calls `Farmer.shiftToolbar`, which physically *rotates*
+  `Farmer.Items` by twelve so a different twelve items sit in the hotbar,
+  and the trigger buttons step the selection with a `(current + 1) % 12`
+  wrap that has nothing to do with `shiftToolbar` and keeps running even
+  with it patched out. `Farmer.shiftToolbar` is patched out entirely
+  (`InventoryNavigationPatches`, see "Known risk areas" **4b** for why that
+  needed a second real-device round to actually take, via imperative
+  `harmony.Patch(...)` rather than attribute scanning) and the shoulder
+  buttons — with nothing left to do once it is — are suppressed via SMAPI
+  and repurposed as a ±12 index jump instead of going idle.
+  The trigger buttons are left unsuppressed — confirmed by a real-device
+  log to have zero effect on them on this platform — but their vanilla
+  step is still corrected: `ModEntry.OnButtonPressed`/`RequestCycle` let
+  vanilla's own `%12` write happen, then `ModEntry.SyncAuthoritativeToolIndex`
+  overwrites it with the equivalent step across the full `MaxItems` range
+  instead — every single tick, indefinitely, not just for a few ticks
+  after each press (an earlier, bounded-window version of this looked
+  right until a longer real-device test showed vanilla's `%12` step
+  reacting to whatever's in the field on whatever press comes next, no
+  matter how long after the mod's last correction that is). See **4b**
+  for the five-round real-device history that landed on this design —
+  including two rounds that misdiagnosed this mod's own code (stacking an
+  extra step on top of vanilla's) as vanilla or SMAPI misbehaving, and one
+  that fixed the double-jump but not the resulting drift once the
+  reassert window closed. `CurrentToolIndex` is now permanently mod-owned
+  from the moment a save loads: every tick, whatever doesn't match the
+  mod's own last-known-good index gets forced back to it, regardless of
+  source. On this mod's actual target (an Android touchscreen handheld,
+  gamepad-only) that source is always vanilla's own `%12` trigger step —
+  but the mechanism can't tell that apart from a legitimate keyboard
+  number-key press or mouse-wheel scroll on desktop, so either of those
+  would also get silently overridden back to whatever the mod last set.
+  A real limitation, not a currently-observed bug.
+- Skips trailing empty slots when stepping forward through the backpack
+  (`ModEntry.RequestCycle`/`IsBackpackTailEmpty`): if the slot a forward
+  trigger/shoulder step would land on, and every slot after it, are all
+  unoccupied, the step jumps straight back to slot 0 instead of making
+  the player click through each empty slot one at a time to get back to
+  their items. Forward steps only (a negative `delta` — stepping
+  backward — isn't affected); a slot at or beyond
+  `player.Items.Count` counts as empty the same way the rest of this mod
+  already treats it (see `ApplyPendingMove`'s own doc comment).
 - Runs an `HttpListener` on port **8082** (must match
   `lib/services/game_connection_service.dart`'s default) with these routes:
   - `GET /ws` — WebSocket upgrade; pushes a fresh JSON state snapshot
@@ -369,6 +416,104 @@ likely each is to have shifted:
    `UiIconCache` `vitals-*` rects and the `Rectangle(366, 412, 5, 6)`
    droplet crop `ModEntry.OnUpdateTicked` filters on came from the same
    decompile.
+4b. `InventoryNavigationPatches.cs` / `ModEntry.OnButtonPressed` — the
+   backpack-navigation rework, revised across five real-device tests
+   (all 2026-09-12):
+   - **Rows stayed active** (1st test). A follow-up SMAPI log pinned this
+     down: `AccessTools.Method(typeof(Farmer), nameof(Farmer.shiftToolbar), new[] { typeof(bool) })`
+     DOES find the method — the signature was right all along — but
+     `harmony.GetPatchedMethods()` didn't include it after
+     `harmony.PatchAll(Assembly.GetExecutingAssembly())`; the
+     attribute-based scan itself wasn't applying this one patch, for
+     reasons the log can't explain further (every other annotated patch in
+     the mod applied fine per the same log). Fixed by patching it
+     imperatively instead — `InventoryNavigationPatches.Apply` calls
+     `harmony.Patch(...)` directly from `ModEntry.Entry`, in its own
+     try/catch, logging either success or the real exception — confirmed
+     working from the 2nd test's log onward (`"Farmer.shiftToolbar(bool)
+     patched OK"`, and the prefix itself logs each time it's actually
+     invoked). `ModEntry.OnButtonPressed` also suppresses the shoulder
+     buttons directly (repurposed as a ±12 index jump) as a second,
+     independent line of defense — the only thing that ever actually
+     handles shoulder presses, since `shiftToolbar` never runs any more.
+   - **Triggers moved the selection by two slots on every press, then
+     occasionally by two after a first fix, then correctly by one but
+     capped at slot 11, then correctly past slot 11 for a while before
+     silently reverting to capped** (1st through 5th tests — the actual
+     sequence of misdiagnoses is worth reading in full, since each one
+     looked like a complete fix until the next, longer test disproved it):
+     1. Setting `CurrentToolIndex` immediately from `OnButtonPressed`
+        moved the selection by two every press. Diagnosed (wrongly, as it
+        turned out) as `IInputHelper.Suppress` being unreliable for
+        analog triggers, letting vanilla's own step land on top of ours.
+     2. Deferring the write to a reassert window (`RequestCycle` +
+        `ReassertDesiredToolIndex`, forcing the value back for a few ticks
+        rather than setting it once) mostly fixed it, but a capture showed
+        an occasional press still skipping a slot — diagnosed (also
+        wrongly) as SMAPI double-firing the press event for one physical
+        squeeze, "fixed" with a debounce.
+     3. A log from a session with debug logging (added to investigate
+        further) showed every single trigger press being silently
+        rejected that whole session by a bug in that debounce (see next
+        bullet) — meaning `RequestCycle` never ran for triggers at all —
+        and yet `CurrentToolIndex` still advanced by exactly one per press
+        anyway. Direct proof `Suppress` has **zero** effect on the trigger
+        buttons on this platform (not "unreliable" — vanilla's own
+        handling was 100% in control through all three tests so far), and
+        that vanilla's own single-step trigger logic was already correct
+        on its own. Concluded: stop fighting it, remove all trigger
+        handling from `OnButtonPressed` entirely.
+     4. That "stop fighting it" version's own log showed exactly why that
+        wasn't the full fix: vanilla's step is genuinely
+        `(current + delta) % 12` — correct arithmetic, but still capped at
+        the old twelve-slot hotbar boundary (`CurrentToolIndex changed
+        11 -> 0`), since that arithmetic has nothing to do with
+        `shiftToolbar`. Fixed by putting triggers back through a reassert
+        mechanism — but a SHORT, bounded one (a few ticks after each
+        press, then the field went unprotected again).
+     5. A longer real-device log of that version showed the wrap coming
+        back, on a delay: the short reassert window closed a few ticks
+        after each press as designed, the corrected value (say, `12`) sat
+        unprotected in between presses — which were 11-29 ticks apart in
+        that log, far outside a 3-tick window — and the moment the NEXT
+        press arrived, vanilla read whatever was sitting there and applied
+        its bare `%12` with no regard for magnitude: `(12 + 1) % 12` is
+        `1`, not `13`. A bounded window can't beat that, because vanilla's
+        step doesn't run on a timer this mod can simply outlast — it fires
+        on whatever press comes next, arbitrarily long after the mod's
+        last correction. Fixed by making the correction permanent:
+        `ModEntry.SyncAuthoritativeToolIndex` now runs every tick,
+        indefinitely, forcing `CurrentToolIndex` back to the mod's own
+        `_desiredToolIndex` for as long as the game is running — not just
+        for a few ticks after a press. `RequestCycle` computes its next
+        step from that same persistent `_desiredToolIndex`, so it's
+        immune to whatever vanilla wrote to the live field in between.
+     The mechanism works *because* vanilla's write is now fully
+     understood to be deterministic: it always writes its own 12-capped
+     result when it next processes a trigger press, and the permanent
+     sync always overwrites that before the next frame renders.
+     Net: two of the five tests were chasing a bug that was actually this
+     mod's own code stacking a step on top of vanilla's, one was chasing
+     a bug that was actually the debounce (below), and one fixed the
+     double-jump without fixing the drift a closed window still allowed.
+   - The debounce bug test 3's log exposed: `_lastAcceptedPressTick`
+     started at `int.MinValue`, and `Game1.ticks - int.MinValue` overflows
+     (the true result exceeds `int.MaxValue`), wrapping to a huge negative
+     number that's always less than the debounce window — silently
+     rejecting every press forever. Fixed by making the field nullable
+     (`int?`) and skipping the subtraction entirely before the first
+     accepted press, rather than using an `int` sentinel value at all.
+   - `ModEntry.DebugLogToolIndexChanges` — watches `Farmer.CurrentToolIndex`
+     independent of anything else in this file, logging every change
+     regardless of source. This is what actually cracked tests 3 through 5;
+     worth keeping in place (it's cheap, `Debug`-level) rather than
+     stripping it back out now that the immediate bug is fixed.
+   - The `"toolSwap"` cue name passed to `Game1.playSound` on each
+     shoulder-button step is the one vanilla uses for tool switching; if
+     it's wrong you'd get a silent (or logged-error) swap, not a crash.
+     Unconfirmed either way so far. (Triggers don't need this — vanilla
+     still processes them and plays its own switch sound.)
+
 5. `PortraitBackgroundCache.cs` / `WindowBorderCache.cs` / `ClockCache.cs`
    — like `PortraitRenderer.cs`/`UiIconCache.cs`, these were written
    against the real decompiled source (`InventoryPage.draw` for the
@@ -768,6 +913,7 @@ row when absent) in case this needs reverting on an older save format.
 - `AnimalIconCache.cs` — crops real farm-animal AND house-pet (Cat/Dog) breed portraits, keyed by type
 - `ClockCache.cs` — crops the clock/day box backdrop and its sundial needle
 - `HudPatches.cs` — Harmony patch that skips drawing the toolbar
+- `InventoryNavigationPatches.cs` — Harmony patch that disables vanilla's toolbar-row rotation
 - `manifest.json` — SMAPI mod manifest
 - `StardewDS.csproj` — project file (net6.0, references ModBuildConfig + Lib.Harmony)
 
