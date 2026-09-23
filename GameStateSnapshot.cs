@@ -103,7 +103,67 @@ namespace StardewDS
         /// older mod builds that don't report this yet.</summary>
         public List<AnimalDto> Animals { get; init; } = new();
 
+        // ---- Skills screen extras --------------------------------------
+        // Everything below mirrors what the decompiled 1.6
+        // `StardewValley.Menus.SkillsPage.draw` renders under the skill
+        // rows (read before writing, per this project's convention) — see
+        // skills_screen.dart for how the app lays it out. All default to
+        // "nothing to show", so older companion builds ignore them and
+        // newer ones degrade cleanly against an older mod.
+
+        /// <summary>Whether the Community Center tracker is shown at all. Same gate as SkillsPage.draw: the host is a Joja member, or the host or this player has (or will receive) the <c>canReadJunimoText</c> mail flag — granted by completing the "Meet the Wizard" quest. While false, vanilla draws a locked placeholder in its place (the "cc-locked" icon).</summary>
+        public bool CommunityCenterUnlocked { get; init; }
+
+        /// <summary>Per-room completion, indexed by vanilla area number: 0 = Pantry, 1 = Crafts Room, 2 = Fish Tank, 3 = Boiler Room, 4 = Vault, 5 = Bulletin Board. Each is <c>Game1.MasterPlayer.hasOrWillReceiveMail("cc&lt;Room&gt;")</c>, exactly what SkillsPage checks to pick the filled vs. empty star. Empty when <see cref="CommunityCenterUnlocked"/> is false.</summary>
+        public List<bool> CommunityCenterAreas { get; init; } = new();
+
+        /// <summary>The host bought a Joja membership (<c>MasterPlayer.mailReceived</c> contains <c>"JojaMember"</c>). SkillsPage then draws the Joja variants of the room stars ("cc-area-*-joja") and a Joja panel ("cc-joja") over the Bulletin Board slot.</summary>
+        public bool IsJojaMember { get; init; }
+
+        /// <summary>Every room restored the Junimo way: <c>MasterPlayer.hasCompletedCommunityCenter() &amp;&amp; !Utility.hasFinishedJojaRoute()</c> — SkillsPage draws a Junimo ("cc-junimo") in the middle of the room stars then.</summary>
+        public bool CommunityCenterComplete { get; init; }
+
+        /// <summary><c>Farmer.HouseUpgradeLevel</c>, 0 (starter cabin) to 3 (cellar).</summary>
+        public int HouseUpgradeLevel { get; init; }
+
+        /// <summary>The localized "Level N" label SkillsPage draws next to the house icon — <c>Strings\UI:Inventory_PortraitHover_Level</c> with <c>HouseUpgradeLevel + 1</c>.</summary>
+        public string HouseLevelLabel { get; init; } = "";
+
+        /// <summary>Deepest regular Mines floor reached, 0-120. Derived from <c>MineShaft.lowestLevelReached</c> (world-wide, not per-player — same value SkillsPage draws), which keeps counting past 120 into the Skull Cavern.</summary>
+        public int DeepestMineLevel { get; init; }
+
+        /// <summary>Deepest Skull Cavern floor reached (<c>lowestLevelReached - 120</c>), or 0 if the player hasn't been below the Mines. When &gt; 0, vanilla shows this number instead of the Mines floor, with a small skull ("skull-cavern") over the ladder icon.</summary>
+        public int DeepestSkullCavernLevel { get; init; }
+
+        /// <summary><c>Utility.numStardropsFound(player)</c>, 0-7. Vanilla draws the count in purple (160, 30, 235) once all 7 are found.</summary>
+        public int StardropsFound { get; init; }
+
+        /// <summary>Whether the mastery bar is shown: <c>Game1.stats.Get("MasteryExp") != 0</c>, SkillsPage's own check. While false, vanilla draws a locked banner in its place ("mastery-locked").</summary>
+        public bool MasteryUnlocked { get; init; }
+
+        /// <summary><c>MasteryTrackerMenu.getCurrentMasteryLevel()</c>, 0-5.</summary>
+        public int MasteryLevel { get; init; }
+
+        /// <summary>Fill fraction of the mastery bar, 0-1 — the same math as <c>MasteryTrackerMenu.drawBar</c>: progress from this level's threshold to the next (10k/25k/45k/70k/100k exp), pinned at 1 once level 5 is reached.</summary>
+        public double MasteryProgress { get; init; }
+
+        /// <summary>Raw mastery exp into the current level, and exp needed for the next one — vanilla's "N/M" text under the bar. Both 0 at level 5.</summary>
+        public int MasteryExpIntoLevel { get; init; }
+
+        /// <summary>See <see cref="MasteryExpIntoLevel"/>.</summary>
+        public int MasteryExpForNextLevel { get; init; }
+
+        /// <summary>Localized "Mastery" label (<c>Strings\1_6_Strings:Mastery</c>, trailing ':' trimmed, as SkillsPage does).</summary>
+        public string MasteryLabel { get; init; } = "";
+
+        /// <summary>Display name of this year's Feast of the Winter Star secret friend while vanilla's Skills page shows them (winter 18 to winter 25, 3pm, once the invitation letter's been read), else null. Their mugshot is served at <c>GET /secret-friend</c> — see <see cref="SecretFriendCache"/>.</summary>
+        public string? SecretFriendName { get; init; }
+
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+
+        /// <summary>Community Center room mail flags in vanilla area-number order (0 Pantry .. 5 Bulletin Board) — the flags SkillsPage.draw checks per room star. See <see cref="CommunityCenterAreas"/>.</summary>
+        private static readonly string[] CommunityCenterAreaFlags =
+            { "ccPantry", "ccCraftsRoom", "ccFishTank", "ccBoilerRoom", "ccVault", "ccBulletin" };
 
         /// <summary>
         /// Cooldown-window lengths, in milliseconds, for each melee-weapon
@@ -409,6 +469,37 @@ namespace StardewDS
             }
 
 
+            // Skills screen extras — see the field doc comments above
+            // and the decompiled SkillsPage.draw they mirror.
+            Farmer host = Game1.MasterPlayer;
+            bool isJoja = host.mailReceived.Contains("JojaMember");
+            bool ccUnlocked = isJoja
+                || host.hasOrWillReceiveMail("canReadJunimoText")
+                || player.hasOrWillReceiveMail("canReadJunimoText");
+            var ccAreas = new List<bool>();
+            if (ccUnlocked)
+            {
+                foreach (string flag in CommunityCenterAreaFlags)
+                    ccAreas.Add(host.hasOrWillReceiveMail(flag));
+            }
+
+            int lowestMineLevel = StardewValley.Locations.MineShaft.lowestLevelReached;
+
+            int masteryExp = (int)Game1.stats.Get("MasteryExp");
+            int masteryLevel = StardewValley.Menus.MasteryTrackerMenu.getCurrentMasteryLevel();
+            int masteryIntoLevel = 0;
+            int masteryForNext = 0;
+            double masteryProgress = 1.0;
+            if (masteryLevel < 5)
+            {
+                masteryIntoLevel = masteryExp - StardewValley.Menus.MasteryTrackerMenu.getMasteryExpNeededForLevel(masteryLevel);
+                masteryForNext = StardewValley.Menus.MasteryTrackerMenu.getMasteryExpNeededForLevel(masteryLevel + 1)
+                    - StardewValley.Menus.MasteryTrackerMenu.getMasteryExpNeededForLevel(masteryLevel);
+                masteryProgress = System.Math.Clamp(masteryIntoLevel / (double)masteryForNext, 0.0, 1.0);
+            }
+
+            string? secretFriend = SecretFriendCache.Refresh(player, Game1.graphics.GraphicsDevice);
+
             return new GameStateSnapshot
             {
                 PlayerName = player.Name,
@@ -464,6 +555,23 @@ namespace StardewDS
                     BootsId = boots?.QualifiedItemId,
                 },
                 Animals = animals,
+
+                CommunityCenterUnlocked = ccUnlocked,
+                CommunityCenterAreas = ccAreas,
+                IsJojaMember = isJoja,
+                CommunityCenterComplete = host.hasCompletedCommunityCenter() && !Utility.hasFinishedJojaRoute(),
+                HouseUpgradeLevel = player.HouseUpgradeLevel,
+                HouseLevelLabel = Game1.content.LoadString("Strings\\UI:Inventory_PortraitHover_Level", player.HouseUpgradeLevel + 1),
+                DeepestMineLevel = System.Math.Min(lowestMineLevel, 120),
+                DeepestSkullCavernLevel = System.Math.Max(lowestMineLevel - 120, 0),
+                StardropsFound = Utility.numStardropsFound(player),
+                MasteryUnlocked = masteryExp != 0,
+                MasteryLevel = masteryLevel,
+                MasteryProgress = masteryProgress,
+                MasteryExpIntoLevel = masteryIntoLevel,
+                MasteryExpForNextLevel = masteryForNext,
+                MasteryLabel = Game1.content.LoadString("Strings\\1_6_Strings:Mastery").TrimEnd(':'),
+                SecretFriendName = secretFriend,
             };
         }
 

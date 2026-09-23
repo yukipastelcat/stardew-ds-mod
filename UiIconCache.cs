@@ -249,6 +249,13 @@ namespace StardewDS
             // `InventorySlotDto.CooldownFraction`) rather than as a
             // second cropped icon.
             ["watering-can-gauge"] = new Rectangle(297, 420, 14, 5),
+
+            // Skills screen extras — the house icon next to the farmhouse
+            // level and the gift box drawn over the Winter Star secret
+            // friend's mugshot, both straight from the decompiled 1.6
+            // SkillsPage.draw.
+            ["house"] = new Rectangle(653, 880, 10, 10),
+            ["secret-friend-gift"] = new Rectangle(147, 412, 10, 11),
         };
 
         // Animals screen — the table's internal grid divider lines.
@@ -303,11 +310,37 @@ namespace StardewDS
             ["animals-tab"] = new Rectangle(257, 246, 16, 16),
             ["care-status-unpet"] = new Rectangle(273, 253, 9, 9),
             ["care-status-pet"] = new Rectangle(291, 253, 9, 9),
+
+            // Skills screen extras — every other sprite the decompiled
+            // 1.6 SkillsPage.draw uses under its skill rows lives on this
+            // sheet: the Community Center room stars (empty/filled, plus
+            // the Joja-route variants 11px lower), the Joja panel drawn
+            // over the Bulletin Board slot, the "not unlocked yet"
+            // placeholder shown before Meet the Wizard, the Junimo drawn
+            // once every room is restored, the mine ladder (and its
+            // "never been down" variant) with the Skull Cavern skull
+            // overlay, the Stardrop (and its "none found" outline), the
+            // mastery icon, and the locked banner shown in place of the
+            // mastery bar until the first mastery exp is earned.
+            ["cc-area-incomplete"] = new Rectangle(363, 298, 11, 11),
+            ["cc-area-complete"] = new Rectangle(374, 298, 11, 11),
+            ["cc-area-incomplete-joja"] = new Rectangle(363, 309, 11, 11),
+            ["cc-area-complete-joja"] = new Rectangle(374, 309, 11, 11),
+            ["cc-joja"] = new Rectangle(363, 250, 51, 48),
+            ["cc-locked"] = new Rectangle(414, 250, 52, 47),
+            ["cc-junimo"] = new Rectangle(386, 299, 13, 15),
+            ["mine-level"] = new Rectangle(385, 315, 13, 13),
+            ["mine-level-none"] = new Rectangle(434, 315, 13, 13),
+            ["skull-cavern"] = new Rectangle(412, 319, 8, 9),
+            ["stardrop"] = new Rectangle(399, 314, 12, 14),
+            ["stardrop-none"] = new Rectangle(421, 314, 12, 14),
+            ["mastery"] = new Rectangle(457, 298, 11, 11),
+            ["mastery-locked"] = new Rectangle(366, 236, 142, 12),
         };
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "care-status-unpet"/"care-status-pet", "table-divider-h"/"table-divider-v", "animals-tab"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "care-status-unpet"/"care-status-pet", "table-divider-h"/"table-divider-v", "animals-tab", and the Skills screen extras: "house", "secret-friend-gift", "cc-area-incomplete"/"cc-area-complete"/"cc-area-incomplete-joja"/"cc-area-complete-joja", "cc-joja", "cc-locked", "cc-junimo", "mine-level"/"mine-level-none", "skull-cavern", "stardrop"/"stardrop-none", "mastery", "mastery-locked"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 

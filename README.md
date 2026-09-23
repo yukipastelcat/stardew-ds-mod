@@ -154,7 +154,7 @@ What it does once running:
     (`MiniPortraitRenderer.cs`). A deliberately different, much smaller
     render than `/portrait` — reuse `/portrait` for anything that wants
     the full standing body. Same refresh cadence as `/portrait`.
-  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|heart-filled|heart-empty|hand-cursor|scroll-arrow-up|scroll-arrow-down|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet|care-status-unpet|care-status-pet|table-divider-h|table-divider-v|animals-tab`
+  - `GET /icon?name=backpack|map|crafting|organize|quality-silver|quality-gold|quality-iridium|skill-farming|skill-mining|skill-foraging|skill-fishing|skill-combat|pip-empty|pip-filled|pip-empty-wide|pip-filled-wide|heart-filled|heart-empty|hand-cursor|scroll-arrow-up|scroll-arrow-down|journal|journal-pulse|watering-can-gauge|vitals-energy-cap-top|vitals-energy-body|vitals-energy-cap-bottom|vitals-health-cap-top|vitals-health-body|vitals-health-cap-bottom|vitals-exhausted|vitals-droplet|care-status-unpet|care-status-pet|table-divider-h|table-divider-v|animals-tab|house|secret-friend-gift|cc-area-incomplete|cc-area-complete|cc-area-incomplete-joja|cc-area-complete-joja|cc-joja|cc-locked|cc-junimo|mine-level|mine-level-none|skull-cavern|stardrop|stardrop-none|mastery|mastery-locked`
     — PNG of one of the app's bottom-nav icons, the backpack screen's
     organize/journal buttons, an item-quality star badge, a Skills
     screen skill icon or level-pip segment, the journal button's
@@ -241,6 +241,29 @@ What it does once running:
     `maxHealth`/`energy`/`maxEnergy` — the app redraws the health/energy
     bars (hidden in-game, see `HudBarPatches.cs`) next to its clock and
     uses these to reproduce the vanilla shake/pulse/droplet effects.
+  - `GET /state`'s (and `/ws`'s) snapshot reports the stats vanilla
+    1.6's own `SkillsPage.draw` shows under the skill rows (verified
+    against the decompiled source, see `GameStateSnapshot.cs`), for the
+    app's Skills screen: `communityCenterUnlocked` (Joja member, or the
+    `canReadJunimoText` flag from the Meet the Wizard quest),
+    `communityCenterAreas` (six bools, vanilla area order Pantry, Crafts
+    Room, Fish Tank, Boiler Room, Vault, Bulletin Board; empty while
+    locked), `isJojaMember`, `communityCenterComplete`,
+    `houseUpgradeLevel` (0-3) + localized `houseLevelLabel`,
+    `deepestMineLevel` (0-120) / `deepestSkullCavernLevel` (0 until the
+    player's been below the Mines), `stardropsFound` (0-7),
+    `masteryUnlocked` / `masteryLevel` (0-5) / `masteryProgress` (0-1) /
+    `masteryExpIntoLevel` / `masteryExpForNextLevel` + localized
+    `masteryLabel`, and `secretFriendName` (the Feast of the Winter Star
+    secret friend, only between winter 18 and the feast, once the
+    invitation letter's been read; else null). The matching sprites
+    (room stars, Joja/locked panels, Junimo, mine ladder, Skull Cavern
+    skull, Stardrop, mastery icon/locked banner, house, gift box) are on
+    `GET /icon`. All default to "nothing to show" for older app builds.
+  - `GET /secret-friend` — PNG of the secret friend's mugshot (winter
+    outfit where the NPC has one), the same crop the vanilla Skills page
+    draws in its bottom-right corner (`SecretFriendCache.cs`). 404 while
+    `secretFriendName` is null.
   - `GET /season-icon?n=<0-3>` and `GET /weather-icon?n=<code>` — PNGs of
     the real season/weather icons the vanilla clock HUD itself draws
     (`SeasonWeatherIconCache.cs`), keyed by `GameStateSnapshot`'s
@@ -912,6 +935,7 @@ row when absent) in case this needs reverting on an older save format.
 - `WorldMapCache.cs` — serves the real vanilla world map background texture
 - `AnimalIconCache.cs` — crops real farm-animal AND house-pet (Cat/Dog) breed portraits, keyed by type
 - `ClockCache.cs` — crops the clock/day box backdrop and its sundial needle
+- `SecretFriendCache.cs` — crops the Feast of the Winter Star secret friend's mugshot for the Skills screen
 - `HudPatches.cs` — Harmony patch that skips drawing the toolbar
 - `InventoryNavigationPatches.cs` — Harmony patch that disables vanilla's toolbar-row rotation
 - `manifest.json` — SMAPI mod manifest
