@@ -419,7 +419,13 @@ namespace StardewDS
                 // The player's actual composited farmer sprite — see
                 // PortraitRenderer.cs — refreshed periodically on the main
                 // thread, served here as a plain PNG.
-                byte[]? png = PortraitRenderer.TryGet();
+                // Optional ?frame=0|1|2 picks a walk-cycle frame for the
+                // Skills page's animated portrait (0, the default, is the
+                // still pose).
+                // and ?eyes=0|1|4 the blink state (open / half / closed).
+                int.TryParse(request.QueryString["frame"], out int portraitFrame);
+                int.TryParse(request.QueryString["eyes"], out int portraitEyes);
+                byte[]? png = PortraitRenderer.TryGet(portraitFrame, portraitEyes);
 
                 if (png is null)
                 {
@@ -500,6 +506,26 @@ namespace StardewDS
                 {
                     response.StatusCode = 404;
                     WriteJson(response, "{\"error\":\"not rendered yet\"}");
+                }
+                else
+                {
+                    response.ContentType = "image/png";
+                    response.ContentLength64 = png.Length;
+                    response.OutputStream.Write(png, 0, png.Length);
+                    response.OutputStream.Close();
+                }
+            }
+            else if (request.HttpMethod == "GET" && path == "/secret-friend")
+            {
+                // Winter Star secret friend's mugshot — see
+                // SecretFriendCache.cs. Only meaningful while /state
+                // reports a non-null secretFriendName.
+                byte[]? png = SecretFriendCache.TryGet();
+
+                if (png is null)
+                {
+                    response.StatusCode = 404;
+                    WriteJson(response, "{\"error\":\"no secret friend to show right now\"}");
                 }
                 else
                 {
