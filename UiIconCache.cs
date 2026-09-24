@@ -256,6 +256,38 @@ namespace StardewDS
             // SkillsPage.draw.
             ["house"] = new Rectangle(653, 880, 10, 10),
             ["secret-friend-gift"] = new Rectangle(147, 412, 10, 11),
+
+            // The chimney-smoke puff SkillsPage.draw animates next to the
+            // farmhouse level once the house is fully upgraded (three of
+            // these, drifting up while shrinking/fading) — `Rectangle(372,
+            // 1956, 10, 10)`. The app runs the animation itself.
+            ["smoke"] = new Rectangle(372, 1956, 10, 10),
+
+            // NumberSprite's digit glyphs, "digit-0" … "digit-9": 8x8 cells
+            // at `(512 + d * 8 % 48, 128 + d * 8 / 48 * 8)` on Cursors,
+            // exactly what `NumberSprite.draw` computes per digit. Used for
+            // the skill levels and the mastery level on the Skills screen.
+            ["digit-0"] = new Rectangle(512, 128, 8, 8),
+            ["digit-1"] = new Rectangle(520, 128, 8, 8),
+            ["digit-2"] = new Rectangle(528, 128, 8, 8),
+            ["digit-3"] = new Rectangle(536, 128, 8, 8),
+            ["digit-4"] = new Rectangle(544, 128, 8, 8),
+            ["digit-5"] = new Rectangle(552, 128, 8, 8),
+            ["digit-6"] = new Rectangle(512, 136, 8, 8),
+            ["digit-7"] = new Rectangle(520, 136, 8, 8),
+            ["digit-8"] = new Rectangle(528, 136, 8, 8),
+            ["digit-9"] = new Rectangle(536, 136, 8, 8),
+        };
+
+        // The Golden Walnut / Qi Gem counters under the player's title on
+        // the Skills screen. Unlike every other entry these come from the
+        // *object* sheet (Game1.objectSpriteSheet), at the object tile
+        // indices SkillsPage.draw passes to getSourceRectForStandardTileSheet
+        // (73 = Golden Walnut, 858 = Qi Gem), 16x16 cells.
+        private static readonly Dictionary<string, int> ObjectSheetTiles = new()
+        {
+            ["golden-walnut"] = 73,
+            ["qi-gem"] = 858,
         };
 
         // Animals screen — the table's internal grid divider lines.
@@ -336,11 +368,32 @@ namespace StardewDS
             ["stardrop-none"] = new Rectangle(421, 314, 12, 14),
             ["mastery"] = new Rectangle(457, 298, 11, 11),
             ["mastery-locked"] = new Rectangle(366, 236, 142, 12),
+
+            // The seasonal doodle in the Skills page's bottom-right corner:
+            // `Rectangle(394 + variant * 33, 120 + seasonIndex * 23, 33,
+            // 23)` — variant 0 is the everyday drawing, 1/2 the festival-day
+            // ones SkillsPage.draw shifts to (spring 13, summer 11, fall 27,
+            // winter 25). Named "doodle-<seasonIndex>-<variant>".
+            ["doodle-0-0"] = new Rectangle(394, 120, 33, 23),
+            ["doodle-0-1"] = new Rectangle(427, 120, 33, 23),
+            ["doodle-0-2"] = new Rectangle(460, 120, 33, 23),
+            ["doodle-1-0"] = new Rectangle(394, 143, 33, 23),
+            ["doodle-1-1"] = new Rectangle(427, 143, 33, 23),
+            ["doodle-1-2"] = new Rectangle(460, 143, 33, 23),
+            ["doodle-2-0"] = new Rectangle(394, 166, 33, 23),
+            ["doodle-2-1"] = new Rectangle(427, 166, 33, 23),
+            ["doodle-2-2"] = new Rectangle(460, 166, 33, 23),
+            ["doodle-3-0"] = new Rectangle(394, 189, 33, 23),
+            ["doodle-3-1"] = new Rectangle(427, 189, 33, 23),
+            ["doodle-3-2"] = new Rectangle(460, 189, 33, 23),
+            // Green rain and married overrides.
+            ["doodle-green-rain"] = new Rectangle(427, 143, 33, 23),
+            ["doodle-married"] = new Rectangle(427, 97, 33, 23),
         };
 
         private static readonly ConcurrentDictionary<string, byte[]> Cache = new();
 
-        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "care-status-unpet"/"care-status-pet", "table-divider-h"/"table-divider-v", "animals-tab", and the Skills screen extras: "house", "secret-friend-gift", "cc-area-incomplete"/"cc-area-complete"/"cc-area-incomplete-joja"/"cc-area-complete-joja", "cc-joja", "cc-locked", "cc-junimo", "mine-level"/"mine-level-none", "skull-cavern", "stardrop"/"stardrop-none", "mastery", "mastery-locked"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
+        /// <summary>Returns the cached PNG bytes for the icon named <paramref name="name"/> ("backpack", "skills", "map", "crafting", "organize", "quality-silver"/"quality-gold"/"quality-iridium", "skill-farming"/"skill-mining"/"skill-foraging"/"skill-fishing"/"skill-combat", "pip-empty"/"pip-filled"/"pip-empty-wide"/"pip-filled-wide", "heart-filled"/"heart-empty", "hand-cursor", "scroll-arrow-up"/"scroll-arrow-down", "journal"/"journal-pulse", "watering-can-gauge", "vitals-energy-cap-top"/"vitals-energy-body"/"vitals-energy-cap-bottom"/"vitals-health-cap-top"/"vitals-health-body"/"vitals-health-cap-bottom"/"vitals-exhausted"/"vitals-droplet", "care-status-unpet"/"care-status-pet", "table-divider-h"/"table-divider-v", "animals-tab", and the Skills screen extras: "house", "secret-friend-gift", "cc-area-incomplete"/"cc-area-complete"/"cc-area-incomplete-joja"/"cc-area-complete-joja", "cc-joja", "cc-locked", "cc-junimo", "mine-level"/"mine-level-none", "skull-cavern", "stardrop"/"stardrop-none", "mastery", "mastery-locked", "smoke", "digit-0"…"digit-9", "golden-walnut", "qi-gem", "doodle-<seasonIndex>-<variant>", "doodle-green-rain", "doodle-married"), or null if unknown or not cached yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 
@@ -373,14 +426,58 @@ namespace StardewDS
                 if (Cache.ContainsKey(entry.Key))
                     continue;
 
-                Crop(entry.Key, Game1.mouseCursors_1_6, entry.Value, device);
+                Crop(entry.Key, Game1.mouseCursors_1_6, entry.Value, device, keyOutBackground: entry.Key.StartsWith("doodle-"));
+            }
+
+            foreach (KeyValuePair<string, int> entry in ObjectSheetTiles)
+            {
+                if (Cache.ContainsKey(entry.Key))
+                    continue;
+
+                Rectangle sourceRect = Game1.getSourceRectForStandardTileSheet(Game1.objectSpriteSheet, entry.Value, 16, 16);
+                Crop(entry.Key, Game1.objectSpriteSheet, sourceRect, device);
             }
         }
 
-        private static void Crop(string cacheKey, Texture2D sourceTexture, Rectangle sourceRect, GraphicsDevice device)
+        /// <summary>
+        /// <paramref name="keyOutBackground"/>: the seasonal Skills-page
+        /// doodles are fully opaque — the sheet bakes the page's own
+        /// parchment shade into every empty pixel (a few near-identical
+        /// tans), which only blends in over the game's own window fill.
+        /// The app's window box has a different fill, so those pixels
+        /// (within a few levels of the sprite's most common color) are made
+        /// transparent and only the drawing itself is kept.
+        /// </summary>
+        private static void Crop(string cacheKey, Texture2D sourceTexture, Rectangle sourceRect, GraphicsDevice device, bool keyOutBackground = false)
         {
             var pixels = new Color[sourceRect.Width * sourceRect.Height];
             sourceTexture.GetData(0, sourceRect, pixels, 0, pixels.Length);
+
+            if (keyOutBackground)
+            {
+                var counts = new Dictionary<uint, int>();
+                foreach (Color pixel in pixels)
+                    counts[pixel.PackedValue] = counts.TryGetValue(pixel.PackedValue, out int n) ? n + 1 : 1;
+
+                uint modePacked = 0;
+                int best = -1;
+                foreach (KeyValuePair<uint, int> entry in counts)
+                {
+                    if (entry.Value > best)
+                    {
+                        best = entry.Value;
+                        modePacked = entry.Key;
+                    }
+                }
+
+                Color bg = new Color { PackedValue = modePacked };
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    Color c = pixels[i];
+                    if (System.Math.Abs(c.R - bg.R) <= 5 && System.Math.Abs(c.G - bg.G) <= 5 && System.Math.Abs(c.B - bg.B) <= 5)
+                        pixels[i] = Color.Transparent;
+                }
+            }
 
             using Texture2D cropped = new(device, sourceRect.Width, sourceRect.Height);
             cropped.SetData(pixels);

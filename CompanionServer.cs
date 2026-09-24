@@ -419,7 +419,13 @@ namespace StardewDS
                 // The player's actual composited farmer sprite — see
                 // PortraitRenderer.cs — refreshed periodically on the main
                 // thread, served here as a plain PNG.
-                byte[]? png = PortraitRenderer.TryGet();
+                // Optional ?frame=0|1|2 picks a walk-cycle frame for the
+                // Skills page's animated portrait (0, the default, is the
+                // still pose).
+                // and ?eyes=0|1|4 the blink state (open / half / closed).
+                int.TryParse(request.QueryString["frame"], out int portraitFrame);
+                int.TryParse(request.QueryString["eyes"], out int portraitEyes);
+                byte[]? png = PortraitRenderer.TryGet(portraitFrame, portraitEyes);
 
                 if (png is null)
                 {

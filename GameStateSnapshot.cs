@@ -156,8 +156,23 @@ namespace StardewDS
         /// <summary>Localized "Mastery" label (<c>Strings\1_6_Strings:Mastery</c>, trailing ':' trimmed, as SkillsPage does).</summary>
         public string MasteryLabel { get; init; } = "";
 
+        /// <summary><c>Game1.smallFont.MeasureString(MasteryLabel).X</c> — SkillsPage.draw shifts the mastery icon and bar right by this minus 64 and narrows the bar by it, so the app needs the game's own measurement (its pixel font's advance widths differ). 0 from older builds.</summary>
+        public double MasteryLabelWidth { get; init; }
+
         /// <summary>Display name of this year's Feast of the Winter Star secret friend while vanilla's Skills page shows them (winter 18 to winter 25, 3pm, once the invitation letter's been read), else null. Their mugshot is served at <c>GET /secret-friend</c> — see <see cref="SecretFriendCache"/>.</summary>
         public string? SecretFriendName { get; init; }
+
+        /// <summary>Skills whose level a buff is currently raising (<c>Game1.player.buffs.&lt;Skill&gt;Level &gt; 0</c>, "farming"/"mining"/"foraging"/"fishing"/"combat") — SkillsPage.draw tints their level number light green instead of sandy brown.</summary>
+        public List<string> BuffedSkills { get; init; } = new();
+
+        /// <summary><c>Game1.netWorldState.Value.GoldenWalnuts</c> — the team's unspent Golden Walnuts, drawn under the player's title while above 0.</summary>
+        public int GoldenWalnuts { get; init; }
+
+        /// <summary><c>Game1.player.QiGems</c>, drawn next to the walnut counter while above 0.</summary>
+        public int QiGems { get; init; }
+
+        /// <summary><c>/icon</c> name of the seasonal doodle SkillsPage.draw puts in the bottom-right corner ("doodle-&lt;seasonIndex&gt;-&lt;variant&gt;", "doodle-green-rain" or "doodle-married") — see <see cref="UiIconCache"/>. The choice mirrors the decompiled source's own if/else chain, including its special festival-day variants.</summary>
+        public string DoodleIcon { get; init; } = "";
 
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
@@ -498,7 +513,35 @@ namespace StardewDS
                 masteryProgress = System.Math.Clamp(masteryIntoLevel / (double)masteryForNext, 0.0, 1.0);
             }
 
+            string masteryLabel = Game1.content.LoadString("Strings\\1_6_Strings:Mastery").TrimEnd(':');
+
             string? secretFriend = SecretFriendCache.Refresh(player, Game1.graphics.GraphicsDevice);
+
+            var buffedSkills = new List<string>();
+            if (player.buffs.FarmingLevel > 0) buffedSkills.Add("farming");
+            if (player.buffs.MiningLevel > 0) buffedSkills.Add("mining");
+            if (player.buffs.ForagingLevel > 0) buffedSkills.Add("foraging");
+            if (player.buffs.FishingLevel > 0) buffedSkills.Add("fishing");
+            if (player.buffs.CombatLevel > 0) buffedSkills.Add("combat");
+
+            // The same if/else chain SkillsPage.draw uses to pick the
+            // seasonal doodle's source rect (394, 120 + seasonIndex * 23):
+            // green rain and being married override everything, then a
+            // few festival days shift the sprite along the sheet by one
+            // or two 33px cells.
+            string doodleIcon = $"doodle-{Game1.seasonIndex}-0";
+            if (Game1.isGreenRain)
+                doodleIcon = "doodle-green-rain";
+            else if (player.activeDialogueEvents.ContainsKey("married"))
+                doodleIcon = "doodle-married";
+            else if (Game1.IsSpring && Game1.dayOfMonth == 13)
+                doodleIcon = $"doodle-{Game1.seasonIndex}-1";
+            else if (Game1.IsSummer && Game1.dayOfMonth == 11)
+                doodleIcon = $"doodle-{Game1.seasonIndex}-2";
+            else if (Game1.IsFall && Game1.dayOfMonth == 27)
+                doodleIcon = $"doodle-{Game1.seasonIndex}-1";
+            else if (Game1.IsWinter && Game1.dayOfMonth == 25)
+                doodleIcon = $"doodle-{Game1.seasonIndex}-1";
 
             return new GameStateSnapshot
             {
@@ -570,8 +613,13 @@ namespace StardewDS
                 MasteryProgress = masteryProgress,
                 MasteryExpIntoLevel = masteryIntoLevel,
                 MasteryExpForNextLevel = masteryForNext,
-                MasteryLabel = Game1.content.LoadString("Strings\\1_6_Strings:Mastery").TrimEnd(':'),
+                MasteryLabel = masteryLabel,
+                MasteryLabelWidth = Game1.smallFont.MeasureString(masteryLabel).X,
                 SecretFriendName = secretFriend,
+                BuffedSkills = buffedSkills,
+                GoldenWalnuts = Game1.netWorldState.Value.GoldenWalnuts,
+                QiGems = player.QiGems,
+                DoodleIcon = doodleIcon,
             };
         }
 
