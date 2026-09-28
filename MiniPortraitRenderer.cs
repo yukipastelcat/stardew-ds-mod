@@ -1,4 +1,3 @@
-using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
@@ -55,28 +54,45 @@ namespace StardewDS
         // pixels past the base body crop for tall/wide hairstyles.
         private const float PositionOffset = 4f;
 
-        private const int RefreshEveryTicks = 30; // ~0.5s at 60 ticks/sec — same cadence as PortraitRenderer, for the same reason (wardrobe/haircut changes are rare, not worth re-rendering every tick).
+        /// <summary>How often, in ticks, to recompute <see cref="PortraitRenderer.AppearanceSignature"/>. Re-renders only when it changes — see <see cref="PortraitRenderer"/>'s doc comment for why a fixed re-render timer caused hitches.</summary>
+        private const int CheckEveryTicks = 30;
 
         private static byte[]? _cached;
-        private static int _ticksSinceRefresh = RefreshEveryTicks; // forces a render on the very first call.
+        private static int _ticksSinceCheck = CheckEveryTicks; // forces a check on the very first call.
+        private static int? _signature;
+        private static RenderTarget2D? _target;
+        private static SpriteBatch? _spriteBatch;
+
+        private static int _version;
+
+        /// <summary>Bumped each time a re-render has finished encoding — 0 until the first one. Reported in the snapshot so the app can put it in the <c>/mini-portrait</c> URL (see <see cref="PortraitRenderer.Version"/>). Safe to read from any thread.</summary>
+        public static int Version => System.Threading.Volatile.Read(ref _version);
 
         /// <summary>The most recently rendered mini-portrait PNG, or null if none has been rendered yet. Safe to call from any thread.</summary>
         public static byte[]? TryGet() => _cached;
 
-        /// <summary>Re-renders the mini portrait if it's due; a cheap no-op otherwise. Main-thread only — call from the same place as <see cref="GameStateSnapshot.Capture"/> (alongside <see cref="PortraitRenderer.Refresh"/>).</summary>
+        /// <summary>Re-renders the mini portrait if the player's appearance changed; a cheap no-op otherwise. Main-thread only — call from the same place as <see cref="GameStateSnapshot.Capture"/> (alongside <see cref="PortraitRenderer.Refresh"/>). PNG encoding runs on the thread pool.</summary>
         public static void Refresh(Farmer player, GraphicsDevice device)
         {
-            _ticksSinceRefresh++;
-            if (_ticksSinceRefresh < RefreshEveryTicks)
+            if (++_ticksSinceCheck < CheckEveryTicks)
                 return;
-            _ticksSinceRefresh = 0;
+            _ticksSinceCheck = 0;
 
-            using RenderTarget2D target = new(device, Width, Height);
+            int signature = PortraitRenderer.AppearanceSignature(player);
+            if (signature == _signature)
+                return;
+            _signature = signature;
+
+            if (_target is null || _target.IsDisposed)
+                _target = new RenderTarget2D(device, Width, Height);
+            if (_spriteBatch is null || _spriteBatch.IsDisposed)
+                _spriteBatch = new SpriteBatch(device);
+            RenderTarget2D target = _target;
+            SpriteBatch spriteBatch = _spriteBatch;
 
             device.SetRenderTarget(target);
             device.Clear(Color.Transparent);
 
-            using SpriteBatch spriteBatch = new(device);
             spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
 
             // The exact real vanilla call (facingDirection is forced to 2
@@ -97,13 +113,11 @@ namespace StardewDS
 
             var pixels = new Color[Width * Height];
             target.GetData(pixels);
-
-            using Texture2D flat = new(device, Width, Height);
-            flat.SetData(pixels);
-
-            using MemoryStream ms = new();
-            flat.SaveAsPng(ms, Width, Height);
-            _cached = ms.ToArray();
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                _cached = PngEncoder.Encode(pixels, Width, Height);
+                System.Threading.Interlocked.Increment(ref _version);
+            });
         }
     }
 }

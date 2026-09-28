@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
@@ -78,6 +77,23 @@ namespace StardewDS
             if (cacheKey is null || Cache.ContainsKey(cacheKey))
                 return;
 
+            // Wallpaper and flooring ("(WP)"/"(FL)") don't have a plain
+            // icon crop at all: their ParsedItemData.GetSourceRect() is a
+            // 16x48 grid cell on Maps/walls_and_floors — right for
+            // wallpaper strips, but flooring tiles live in a different
+            // 32x32 grid further down the same sheet, so every floor's
+            // crop landed on some unrelated wallpaper (and wallpaper's
+            // included 20 extra rows). Vanilla's own
+            // Wallpaper.drawInMenu instead draws a small container sprite
+            // from mouseCursors2 with the item's own per-instance
+            // sourceRect (verified against the decompiled 1.6
+            // Wallpaper.cs), so reproduce that exactly.
+            if (item is Wallpaper wallpaper)
+            {
+                Cache[cacheKey] = RenderInMenu(wallpaper);
+                return;
+            }
+
             ParsedItemData? data = ItemRegistry.GetData(item!.QualifiedItemId);
             if (data is null)
                 return;
@@ -105,13 +121,33 @@ namespace StardewDS
 
             var pixels = new Color[sourceRect.Width * sourceRect.Height];
             sourceTexture.GetData(0, sourceRect, pixels, 0, pixels.Length);
+            return PngEncoder.Encode(pixels, sourceRect.Width, sourceRect.Height);
+        }
 
-            using Texture2D cropped = new(Game1.graphics.GraphicsDevice, sourceRect.Width, sourceRect.Height);
-            cropped.SetData(pixels);
+        /// <summary>Size of a vanilla inventory slot's icon area — what <c>Item.drawInMenu</c> draws into at <c>scaleSize</c> 1.</summary>
+        private const int MenuIconSize = 64;
 
-            using MemoryStream ms = new();
-            cropped.SaveAsPng(ms, sourceRect.Width, sourceRect.Height);
-            return ms.ToArray();
+        /// <summary>Renders <paramref name="item"/> with its own vanilla <c>drawInMenu</c> (stack number hidden) into a 64x64 canvas — for items whose menu icon is a composite rather than one sprite-sheet crop (see <see cref="EnsureCached"/>).</summary>
+        private static byte[] RenderInMenu(Item item)
+        {
+            GraphicsDevice device = Game1.graphics.GraphicsDevice;
+            using RenderTarget2D target = new(device, MenuIconSize, MenuIconSize);
+
+            device.SetRenderTarget(target);
+            device.Clear(Color.Transparent);
+
+            using (SpriteBatch spriteBatch = new(device))
+            {
+                spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
+                item.drawInMenu(spriteBatch, Vector2.Zero, 1f, 1f, 0.9f, StackDrawType.Hide, Color.White, drawShadow: false);
+                spriteBatch.End();
+            }
+
+            device.SetRenderTarget(null);
+
+            var pixels = new Color[MenuIconSize * MenuIconSize];
+            target.GetData(pixels);
+            return PngEncoder.Encode(pixels, MenuIconSize, MenuIconSize);
         }
 
         /// <summary>
@@ -154,13 +190,7 @@ namespace StardewDS
 
             var pixels = new Color[baseRect.Width * baseRect.Height];
             target.GetData(pixels);
-
-            using Texture2D flat = new(device, baseRect.Width, baseRect.Height);
-            flat.SetData(pixels);
-
-            using MemoryStream ms = new();
-            flat.SaveAsPng(ms, baseRect.Width, baseRect.Height);
-            return ms.ToArray();
+            return PngEncoder.Encode(pixels, baseRect.Width, baseRect.Height);
         }
     }
 }

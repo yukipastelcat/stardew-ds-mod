@@ -50,6 +50,12 @@ namespace StardewDS
         /// <summary>Last <c>Farmer.CurrentToolIndex</c> value logged by the per-tick change watcher in <see cref="OnUpdateTicked"/>, so that watcher logs only on an actual change instead of once per tick. <see langword="null"/> means nothing logged yet this session.</summary>
         private int? _debugLastLoggedToolIndex;
 
+        /// <summary>Publish a fresh snapshot every this many ticks (~30/s) rather than every tick — capturing it every single tick was a steady main-thread cost for no visible gain. Anything the player just did (an app request or a trigger/shoulder press) publishes on that same tick regardless, via <see cref="_snapshotNow"/>, so the app's selection never lags.</summary>
+        private const int SnapshotEveryTicks = 2;
+
+        /// <summary>Set when something happened this tick that the app should see immediately — see <see cref="SnapshotEveryTicks"/>.</summary>
+        private bool _snapshotNow;
+
         /*********
         ** Public methods
         *********/
@@ -172,9 +178,10 @@ namespace StardewDS
                 // the old one.
                 bool appSelected = this.ApplyPendingSelection();
                 this.SyncAuthoritativeToolIndex(appSelected);
-                this.ApplyPendingMove();
-                this.ApplyPendingOrganize();
+                bool moved = this.ApplyPendingMove();
+                bool organized = this.ApplyPendingOrganize();
                 this.ApplyPendingOpenJournal();
+                this._snapshotNow |= appSelected || moved || organized;
 
                 // Debug-only (2026-09-12 investigation) — see the method's
                 // own doc comment. Runs last so it reports whatever the
@@ -182,13 +189,18 @@ namespace StardewDS
                 this.DebugLogToolIndexChanges();
             }
 
-            this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
+            if (this._snapshotNow || e.IsMultipleOf(SnapshotEveryTicks))
+            {
+                this._snapshotNow = false;
+                this._server?.UpdateSnapshot(GameStateSnapshot.Capture());
+            }
         }
 
         /// <summary>Raised after the player returns to the title screen — clears the authoritative tool index baseline (see <see cref="SyncAuthoritativeToolIndex"/>, which will adopt whatever's current the next time a save loads, rather than trying to force a value left over from the last save) and clears the published snapshot so the app correctly reports "not connected" instead of showing stale data.</summary>
         private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
         {
             this._desiredToolIndex = null;
+            GameStateSnapshot.Reset();
             this._server?.UpdateSnapshot(null);
         }
 
@@ -404,6 +416,7 @@ namespace StardewDS
             );
 
             this._desiredToolIndex = next;
+            this._snapshotNow = true;
 
             // See OnButtonPressed's call site for why this is conditional
             // now — vanilla already plays its own tool-switch sound for
@@ -544,8 +557,8 @@ namespace StardewDS
             return false;
         }
 
-        /// <summary>Applies (on the main thread) the most recent pending move request from the app, if any — swaps whatever is in the two slots. Both indices must be within the player's current (unlocked) backpack capacity; out-of-range requests (e.g. a stale drag onto a slot that got locked) are silently dropped rather than applied partially.</summary>
-        private void ApplyPendingMove()
+        /// <summary>Applies (on the main thread) the most recent pending move request from the app, if any — swaps whatever is in the two slots. Both indices must be within the player's current (unlocked) backpack capacity; out-of-range requests (e.g. a stale drag onto a slot that got locked) are silently dropped rather than applied partially. Returns whether a move was actually applied.</summary>
+        private bool ApplyPendingMove()
         {
             (int From, int To)? move;
             lock (this._pendingLock)
@@ -555,13 +568,13 @@ namespace StardewDS
             }
 
             if (move is not (int from, int to))
-                return;
+                return false;
 
             Farmer? player = Game1.player;
             if (player is null || from == to)
-                return;
+                return false;
             if (from < 0 || from >= player.MaxItems || to < 0 || to >= player.MaxItems)
-                return;
+                return false;
 
             // player.Items.Count only covers slots that have actually held
             // an item at some point — confirmed against the decompiled
@@ -585,10 +598,11 @@ namespace StardewDS
                 player.Items.Add(null!);
 
             (player.Items[from], player.Items[to]) = (player.Items[to], player.Items[from]);
+            return true;
         }
 
-        /// <summary>Applies (on the main thread) a pending organize request from the app, if any — calls the game's own organize-button logic so the result matches exactly what pressing it in-game would do.</summary>
-        private void ApplyPendingOrganize()
+        /// <summary>Applies (on the main thread) a pending organize request from the app, if any — calls the game's own organize-button logic so the result matches exactly what pressing it in-game would do. Returns whether it ran.</summary>
+        private bool ApplyPendingOrganize()
         {
             bool organize;
             lock (this._pendingLock)
@@ -598,9 +612,10 @@ namespace StardewDS
             }
 
             if (!organize || Game1.player is null)
-                return;
+                return false;
 
             ItemGrabMenu.organizeItemsInList(Game1.player.Items);
+            return true;
         }
 
         /// <summary>Applies (on the main thread) a pending "open journal" request from the app, if any — opens the real vanilla <see cref="QuestLog"/> menu, the same menu class the game's own journal key/quest-log button opens. Guarded the same way the real quest-log button's own click handler is (verified against the decompiled <c>DayTimeMoneyBox.receiveLeftClick</c>) — player able to move, no dialogue/event/farm-event in progress — plus not stomping an already-open menu, since a remote tap arriving mid-cutscene or while some other menu is already up shouldn't force one open.</summary>

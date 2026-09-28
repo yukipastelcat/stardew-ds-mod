@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
@@ -397,13 +396,26 @@ namespace StardewDS
         public static byte[]? TryGet(string name) =>
             Cache.TryGetValue(name, out byte[]? bytes) ? bytes : null;
 
-        /// <summary>Crops and caches every icon in <see cref="SourceRects"/> and <see cref="MenuTileIndices"/> that isn't cached yet — cheap no-op once warmed (these never change, unlike item sprites or the portrait). Main-thread only (touches the graphics device).</summary>
+        /// <summary>Most icons cropped per <see cref="EnsureCached"/> call, so warming ~100 icons after a save loads is spread over a few ticks instead of one long hitch.</summary>
+        private const int CropsPerCall = 12;
+
+        /// <summary>Set once every icon is cached, so later calls skip walking the tables entirely.</summary>
+        private static bool _warmed;
+
+        /// <summary>Crops and caches icons in <see cref="SourceRects"/>, <see cref="MenuTileIndices"/>, <see cref="SourceRects16"/> and <see cref="ObjectSheetTiles"/> that aren't cached yet — at most <see cref="CropsPerCall"/> per call, and a no-op once everything is warmed (these never change, unlike item sprites or the portrait). Main-thread only (touches the graphics device).</summary>
         public static void EnsureCached(GraphicsDevice device)
         {
+            if (_warmed)
+                return;
+
+            int budget = CropsPerCall;
+
             foreach (KeyValuePair<string, Rectangle> entry in SourceRects)
             {
                 if (Cache.ContainsKey(entry.Key))
                     continue;
+                if (budget-- <= 0)
+                    return;
 
                 Crop(entry.Key, Game1.mouseCursors, entry.Value, device);
             }
@@ -412,6 +424,8 @@ namespace StardewDS
             {
                 if (Cache.ContainsKey(entry.Key))
                     continue;
+                if (budget-- <= 0)
+                    return;
 
                 // The real vanilla helper computes the tile's pixel
                 // Rectangle from Game1.menuTexture's own actual width —
@@ -425,6 +439,8 @@ namespace StardewDS
             {
                 if (Cache.ContainsKey(entry.Key))
                     continue;
+                if (budget-- <= 0)
+                    return;
 
                 Crop(entry.Key, Game1.mouseCursors_1_6, entry.Value, device, keyOutBackground: entry.Key.StartsWith("doodle-"));
             }
@@ -433,10 +449,14 @@ namespace StardewDS
             {
                 if (Cache.ContainsKey(entry.Key))
                     continue;
+                if (budget-- <= 0)
+                    return;
 
                 Rectangle sourceRect = Game1.getSourceRectForStandardTileSheet(Game1.objectSpriteSheet, entry.Value, 16, 16);
                 Crop(entry.Key, Game1.objectSpriteSheet, sourceRect, device);
             }
+
+            _warmed = true;
         }
 
         /// <summary>
@@ -479,12 +499,7 @@ namespace StardewDS
                 }
             }
 
-            using Texture2D cropped = new(device, sourceRect.Width, sourceRect.Height);
-            cropped.SetData(pixels);
-
-            using MemoryStream ms = new();
-            cropped.SaveAsPng(ms, sourceRect.Width, sourceRect.Height);
-            Cache[cacheKey] = ms.ToArray();
+            Cache[cacheKey] = PngEncoder.Encode(pixels, sourceRect.Width, sourceRect.Height);
         }
     }
 }

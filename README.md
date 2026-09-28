@@ -145,8 +145,14 @@ What it does once running:
   - `GET /portrait` — PNG of the player's actual composited farmer sprite
     (body/shirt/pants/hair/hat/accessories), rendered off-screen the same
     way the vanilla inventory menu draws its own portrait box
-    (`PortraitRenderer.cs`). Re-rendered roughly twice a second so it
-    picks up a wardrobe/haircut change without re-rendering every tick.
+    (`PortraitRenderer.cs`). Re-rendered only when the player's
+    appearance changes (checked twice a second), one frame per tick,
+    with PNG encoding off the main thread (`PngEncoder.cs`) — the old
+    fixed twice-a-second re-render of all nine frames was a visible
+    in-game hitch.
+    `/state`'s `portraitVersion` (and `miniPortraitVersion` for
+    `/mini-portrait`) is bumped after each finished re-render; the app
+    passes it as an ignored `?v=` so its URL-keyed image cache refetches.
   - `GET /mini-portrait` — PNG of the real vanilla head+hair-only icon
     (no shirt/pants/hat/accessories) — the exact
     `FarmerRenderer.drawMiniPortrat` call the GameMenu's Skills tab and

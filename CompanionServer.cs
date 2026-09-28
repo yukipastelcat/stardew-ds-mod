@@ -53,9 +53,19 @@ namespace StardewDS
         // this is what replaced the app's old 1.5s /state poll. /select
         // and /move stay plain POST requests; only the state push moved
         // to a socket.
-        private readonly List<WebSocket> _sockets = new();
-        private readonly object _socketsLock = new();
-        private string? _lastBroadcastJson;
+        private readonly List<SocketClient> _clients = new();
+        private readonly object _clientsLock = new();
+        private volatile string? _lastBroadcastJson;
+
+        // Serializing the snapshot (and diffing it against the last one)
+        // used to happen inline in UpdateSnapshot, i.e. on the main game
+        // thread every tick. It now happens on this dedicated thread:
+        // UpdateSnapshot only swaps in the new (immutable) snapshot and
+        // signals, and this thread serializes whatever is latest —
+        // intermediate snapshots it didn't get to are simply skipped.
+        private readonly AutoResetEvent _snapshotSignal = new(false);
+        private Thread? _broadcastThread;
+        private volatile bool _hasPendingSnapshot;
 
         public CompanionServer(IMonitor monitor, int port, Action<int> onSelectRequested, Action<int, int> onMoveRequested, Action onOrganizeRequested, Action onOpenJournalRequested)
         {
@@ -67,46 +77,121 @@ namespace StardewDS
             this._onOpenJournalRequested = onOpenJournalRequested;
         }
 
-        /// <summary>Called from the main game thread each tick to publish the latest state. Pass null when no save is loaded. Cheap no-op for connected WebSocket clients when nothing actually changed since the last call — only a real difference triggers a push, so this can safely be called every tick instead of needing its own throttle.</summary>
+        /// <summary>Called from the main game thread to publish the latest state. Pass null when no save is loaded. Never serializes or does I/O itself — it just hands the snapshot to the broadcast thread (see <see cref="BroadcastLoop"/>), which only pushes to clients when the JSON actually changed.</summary>
         public void UpdateSnapshot(GameStateSnapshot? snapshot)
         {
             this._snapshot = snapshot;
-
-            string json = snapshot is null ? "{\"connected\":false}" : JsonSerializer.Serialize(snapshot, JsonOptions);
-            if (json == this._lastBroadcastJson)
-                return;
-
-            this._lastBroadcastJson = json;
-            this.Broadcast(json);
+            this._hasPendingSnapshot = true;
+            this._snapshotSignal.Set();
         }
 
-        /// <summary>Fire-and-forget push of <paramref name="json"/> to every connected WebSocket client. Never blocks the caller (the main game thread) — each send is its own Task, and a slow/dead client can't hold up the others.</summary>
+        private void BroadcastLoop()
+        {
+            while (this._running)
+            {
+                this._snapshotSignal.WaitOne(500);
+                if (!this._hasPendingSnapshot)
+                    continue;
+                this._hasPendingSnapshot = false;
+
+                try
+                {
+                    GameStateSnapshot? snapshot = this._snapshot;
+                    string json = snapshot is null ? "{\"connected\":false}" : JsonSerializer.Serialize(snapshot, JsonOptions);
+                    if (json == this._lastBroadcastJson)
+                        continue;
+
+                    this._lastBroadcastJson = json;
+                    this.Broadcast(json);
+                }
+                catch (Exception ex)
+                {
+                    this._monitor.Log($"Failed to publish companion state: {ex}", LogLevel.Error);
+                }
+            }
+        }
+
+        /// <summary>Queues <paramref name="json"/> for every connected WebSocket client. Never blocks — each client drains its own queue (see <see cref="SocketClient"/>), so a slow/dead client can't hold up the others.</summary>
         private void Broadcast(string json)
         {
-            List<WebSocket> sockets;
-            lock (this._socketsLock)
+            List<SocketClient> clients;
+            lock (this._clientsLock)
             {
-                if (this._sockets.Count == 0)
+                if (this._clients.Count == 0)
                     return;
-                sockets = new List<WebSocket>(this._sockets);
+                clients = new List<SocketClient>(this._clients);
             }
 
             byte[] bytes = Encoding.UTF8.GetBytes(json);
-            foreach (WebSocket socket in sockets)
-                _ = SendAsync(socket, bytes);
+            foreach (SocketClient client in clients)
+                client.Enqueue(bytes);
         }
 
-        private static async Task SendAsync(WebSocket socket, byte[] bytes)
+        /// <summary>
+        /// One connected WebSocket. <see cref="WebSocket.SendAsync"/> must
+        /// not be called again while a previous send is still in flight —
+        /// the old fire-and-forget broadcast did exactly that whenever
+        /// state changed faster than a send completed, and the resulting
+        /// exception silently dropped that update. Each client now keeps
+        /// only the newest pending message and sends one at a time; if
+        /// several snapshots arrive during a send, only the latest is sent
+        /// next (the app only ever needs the current state).
+        /// </summary>
+        private sealed class SocketClient
         {
-            try
+            private readonly object _gate = new();
+            private byte[]? _pending;
+            private bool _sending;
+
+            public SocketClient(WebSocket socket) => this.Socket = socket;
+
+            public WebSocket Socket { get; }
+
+            public void Enqueue(byte[] bytes)
             {
-                if (socket.State == WebSocketState.Open)
-                    await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+                lock (this._gate)
+                {
+                    this._pending = bytes;
+                    if (this._sending)
+                        return;
+                    this._sending = true;
+                }
+                _ = this.DrainAsync();
             }
-            catch
+
+            private async Task DrainAsync()
             {
-                // Dead/dropped connection — HandleWebSocketAsync's receive
-                // loop will notice and remove it from _sockets.
+                while (true)
+                {
+                    byte[]? next;
+                    lock (this._gate)
+                    {
+                        next = this._pending;
+                        this._pending = null;
+                        if (next is null)
+                        {
+                            this._sending = false;
+                            return;
+                        }
+                    }
+
+                    try
+                    {
+                        if (this.Socket.State == WebSocketState.Open)
+                            await this.Socket.SendAsync(new ArraySegment<byte>(next), WebSocketMessageType.Text, true, CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Dead/dropped connection — HandleWebSocketAsync's
+                        // receive loop will notice and unregister it.
+                        lock (this._gate)
+                        {
+                            this._pending = null;
+                            this._sending = false;
+                        }
+                        return;
+                    }
+                }
             }
         }
 
@@ -127,15 +212,16 @@ namespace StardewDS
                 return;
             }
 
-            lock (this._socketsLock)
-                this._sockets.Add(socket);
+            var client = new SocketClient(socket);
+            lock (this._clientsLock)
+                this._clients.Add(client);
             this._monitor.Log("Companion app connected via WebSocket.", LogLevel.Trace);
 
             try
             {
                 string? current = this._lastBroadcastJson;
                 if (current is not null)
-                    await SendAsync(socket, Encoding.UTF8.GetBytes(current));
+                    client.Enqueue(Encoding.UTF8.GetBytes(current));
 
                 var buffer = new byte[1024];
                 while (socket.State == WebSocketState.Open)
@@ -155,8 +241,8 @@ namespace StardewDS
             }
             finally
             {
-                lock (this._socketsLock)
-                    this._sockets.Remove(socket);
+                lock (this._clientsLock)
+                    this._clients.Remove(client);
                 socket.Dispose();
                 this._monitor.Log("Companion app WebSocket disconnected.", LogLevel.Trace);
             }
@@ -191,6 +277,8 @@ namespace StardewDS
             this._running = true;
             this._thread = new Thread(this.Listen) { IsBackground = true, Name = "StardewDS companion server" };
             this._thread.Start();
+            this._broadcastThread = new Thread(this.BroadcastLoop) { IsBackground = true, Name = "StardewDS companion broadcast" };
+            this._broadcastThread.Start();
 
             this._monitor.Log($"Companion server listening on port {this._port}.", LogLevel.Info);
         }
@@ -201,15 +289,17 @@ namespace StardewDS
             try { this._listener?.Stop(); }
             catch { /* already stopped */ }
 
-            List<WebSocket> sockets;
-            lock (this._socketsLock)
+            this._snapshotSignal.Set();
+
+            List<SocketClient> clients;
+            lock (this._clientsLock)
             {
-                sockets = new List<WebSocket>(this._sockets);
-                this._sockets.Clear();
+                clients = new List<SocketClient>(this._clients);
+                this._clients.Clear();
             }
-            foreach (WebSocket socket in sockets)
+            foreach (SocketClient client in clients)
             {
-                try { socket.Abort(); }
+                try { client.Socket.Abort(); }
                 catch { /* already closed */ }
             }
         }
@@ -228,20 +318,29 @@ namespace StardewDS
                     break; // listener was stopped
                 }
 
+                // Handled on the thread pool so a burst of sprite/icon
+                // requests (the app loads many at once when a screen first
+                // opens) is served in parallel instead of queuing behind
+                // each other on this one accept thread.
+                ThreadPool.QueueUserWorkItem(_ => this.HandleSafely(ctx));
+            }
+        }
+
+        private void HandleSafely(HttpListenerContext ctx)
+        {
+            try
+            {
+                this.Handle(ctx);
+            }
+            catch (Exception ex)
+            {
+                this._monitor.Log($"Error handling companion request: {ex}", LogLevel.Error);
                 try
                 {
-                    this.Handle(ctx);
+                    ctx.Response.StatusCode = 500;
+                    ctx.Response.Close();
                 }
-                catch (Exception ex)
-                {
-                    this._monitor.Log($"Error handling companion request: {ex}", LogLevel.Error);
-                    try
-                    {
-                        ctx.Response.StatusCode = 500;
-                        ctx.Response.Close();
-                    }
-                    catch { /* response already closed */ }
-                }
+                catch { /* response already closed */ }
             }
         }
 
@@ -280,10 +379,14 @@ namespace StardewDS
             // gets state via /ws, not by polling this.
             if (request.HttpMethod == "GET" && path == "/state")
             {
-                GameStateSnapshot? snap = this._snapshot;
-                string json = snap is null
-                    ? "{\"connected\":false}"
-                    : JsonSerializer.Serialize(snap, JsonOptions);
+                string? json = this._lastBroadcastJson;
+                if (json is null)
+                {
+                    GameStateSnapshot? snap = this._snapshot;
+                    json = snap is null
+                        ? "{\"connected\":false}"
+                        : JsonSerializer.Serialize(snap, JsonOptions);
+                }
                 WriteJson(response, json);
             }
             else if (request.HttpMethod == "POST" && path == "/select")

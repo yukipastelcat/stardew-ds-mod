@@ -174,6 +174,15 @@ namespace StardewDS
         /// <summary><c>/icon</c> name of the seasonal doodle SkillsPage.draw puts in the bottom-right corner ("doodle-&lt;seasonIndex&gt;-&lt;variant&gt;", "doodle-green-rain" or "doodle-married") — see <see cref="UiIconCache"/>. The choice mirrors the decompiled source's own if/else chain, including its special festival-day variants.</summary>
         public string DoodleIcon { get; init; } = "";
 
+        /// <summary>True while the game is somewhere the companion should blank itself (show its black idle screen): a cutscene, sleeping/the overnight sequence, or a loading/transition screen — see <see cref="IsIdle"/>.</summary>
+        public bool Idle { get; init; }
+
+        /// <summary><see cref="PortraitRenderer.Version"/> — pass as <c>GET /portrait?v=</c> so the app refetches the portrait when the player's appearance changes instead of showing its cached copy. 0 until the first render is ready.</summary>
+        public int PortraitVersion { get; init; }
+
+        /// <summary><see cref="MiniPortraitRenderer.Version"/> — same idea as <see cref="PortraitVersion"/>, for <c>GET /mini-portrait?v=</c>.</summary>
+        public int MiniPortraitVersion { get; init; }
+
         private static readonly string[] Weekdays = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 
         /// <summary>Community Center room mail flags in vanilla area-number order (0 Pantry .. 5 Bulletin Board) — the flags SkillsPage.draw checks per room star. See <see cref="CommunityCenterAreas"/>.</summary>
@@ -406,6 +415,146 @@ namespace StardewDS
             SpriteCache.EnsureCached(rightRing);
             SpriteCache.EnsureCached(boots);
 
+            // Animals and the Skills-screen extras change rarely but are
+            // comparatively expensive to gather (getAllFarmAnimals rebuilds
+            // a dictionary and gets sorted, plus content string lookups,
+            // font measuring and mail-flag scans) — refreshed about once a
+            // second instead of on every snapshot. See SlowFields.
+            if (_slow is null || ++_capturesSinceSlowRefresh >= SlowRefreshEveryCaptures)
+            {
+                _slow = CaptureSlow(player);
+                _capturesSinceSlowRefresh = 0;
+            }
+            SlowFields slow = _slow;
+
+            var buffedSkills = new List<string>();
+            if (player.buffs.FarmingLevel > 0) buffedSkills.Add("farming");
+            if (player.buffs.MiningLevel > 0) buffedSkills.Add("mining");
+            if (player.buffs.ForagingLevel > 0) buffedSkills.Add("foraging");
+            if (player.buffs.FishingLevel > 0) buffedSkills.Add("fishing");
+            if (player.buffs.CombatLevel > 0) buffedSkills.Add("combat");
+
+            return new GameStateSnapshot
+            {
+                PlayerName = player.Name,
+                FarmName = player.farmName.Value,
+                Level = player.Level,
+                Title = slow.Title,
+                CurrentFunds = player.Money,
+                TotalEarnings = player.totalMoneyEarned,
+
+                FarmingLevel = player.FarmingLevel,
+                MiningLevel = player.MiningLevel,
+                ForagingLevel = player.ForagingLevel,
+                FishingLevel = player.FishingLevel,
+                CombatLevel = player.CombatLevel,
+                HasVisibleQuests = player.hasVisibleQuests,
+                HasNewQuestActivity = player.hasNewQuestActivity(),
+
+                Health = player.health,
+                MaxHealth = player.maxHealth,
+                Energy = (int)player.Stamina,
+                MaxEnergy = player.MaxStamina,
+                Exhausted = player.exhausted.Value,
+                EnergyShake = Game1.staminaShakeTimer > 0,
+                HealthShake = Game1.hitShakeTimer > 0,
+
+                Weekday = Weekdays[(Game1.dayOfMonth - 1) % 7],
+                Season = Capitalize(Game1.currentSeason),
+                DayOfMonth = Game1.dayOfMonth,
+                Year = Game1.year,
+                Hour24 = Game1.timeOfDay / 100,
+                Minute = Game1.timeOfDay % 100,
+                Weather = weather,
+                SeasonNumber = seasonNumber,
+                WeatherIconCode = Game1.weatherIcon,
+
+                LocationName = locationName,
+                MapMarkerX = markerX,
+                MapMarkerY = markerY,
+
+                BackpackSize = player.MaxItems,
+                SelectedIndex = player.CurrentToolIndex,
+                Inventory = inventory,
+
+                Equipment = new EquipmentDto
+                {
+                    Hat = hat?.DisplayName,
+                    HatId = hat?.QualifiedItemId,
+                    LeftRing = leftRing?.DisplayName,
+                    LeftRingId = leftRing?.QualifiedItemId,
+                    RightRing = rightRing?.DisplayName,
+                    RightRingId = rightRing?.QualifiedItemId,
+                    Boots = boots?.DisplayName,
+                    BootsId = boots?.QualifiedItemId,
+                },
+                Animals = slow.Animals,
+
+                CommunityCenterUnlocked = slow.CommunityCenterUnlocked,
+                CommunityCenterAreas = slow.CommunityCenterAreas,
+                IsJojaMember = slow.IsJojaMember,
+                CommunityCenterComplete = slow.CommunityCenterComplete,
+                HouseUpgradeLevel = player.HouseUpgradeLevel,
+                HouseLevelLabel = slow.HouseLevelLabel,
+                DeepestMineLevel = System.Math.Min(slow.LowestMineLevel, 120),
+                DeepestSkullCavernLevel = System.Math.Max(slow.LowestMineLevel - 120, 0),
+                StardropsFound = slow.StardropsFound,
+                MasteryUnlocked = slow.MasteryExp != 0,
+                MasteryLevel = slow.MasteryLevel,
+                MasteryProgress = slow.MasteryProgress,
+                MasteryExpIntoLevel = slow.MasteryExpIntoLevel,
+                MasteryExpForNextLevel = slow.MasteryExpForNextLevel,
+                MasteryLabel = slow.MasteryLabel,
+                MasteryLabelWidth = slow.MasteryLabelWidth,
+                SecretFriendName = slow.SecretFriendName,
+                BuffedSkills = buffedSkills,
+                GoldenWalnuts = Game1.netWorldState.Value.GoldenWalnuts,
+                QiGems = player.QiGems,
+                DoodleIcon = slow.DoodleIcon,
+                Idle = IsIdle(player),
+                PortraitVersion = PortraitRenderer.Version,
+                MiniPortraitVersion = MiniPortraitRenderer.Version,
+            };
+        }
+
+        /// <summary>How many <see cref="Capture"/> calls a <see cref="SlowFields"/> result is reused for before being rebuilt (~1s at the snapshot rate ModEntry uses).</summary>
+        private const int SlowRefreshEveryCaptures = 30;
+
+        private static SlowFields? _slow;
+        private static int _capturesSinceSlowRefresh;
+
+        /// <summary>Drops cached slow-changing fields, so the next <see cref="Capture"/> rebuilds them — call when the loaded save changes.</summary>
+        public static void Reset()
+        {
+            _slow = null;
+            _capturesSinceSlowRefresh = 0;
+        }
+
+        /// <summary>The part of a snapshot that changes rarely but is comparatively expensive to gather — see <see cref="Capture"/>.</summary>
+        private sealed class SlowFields
+        {
+            public List<AnimalDto> Animals { get; init; } = new();
+            public string Title { get; init; } = "";
+            public bool CommunityCenterUnlocked { get; init; }
+            public List<bool> CommunityCenterAreas { get; init; } = new();
+            public bool IsJojaMember { get; init; }
+            public bool CommunityCenterComplete { get; init; }
+            public string HouseLevelLabel { get; init; } = "";
+            public int LowestMineLevel { get; init; }
+            public int StardropsFound { get; init; }
+            public int MasteryExp { get; init; }
+            public int MasteryLevel { get; init; }
+            public double MasteryProgress { get; init; }
+            public int MasteryExpIntoLevel { get; init; }
+            public int MasteryExpForNextLevel { get; init; }
+            public string MasteryLabel { get; init; } = "";
+            public double MasteryLabelWidth { get; init; }
+            public string? SecretFriendName { get; init; }
+            public string DoodleIcon { get; init; } = "";
+        }
+
+        private static SlowFields CaptureSlow(Farmer player)
+        {
             // Farm animals — coops/barns/pasture, via the same
             // aggregating helper most published SMAPI mods use for
             // this (Farm.getAllFarmAnimals(), which internally covers
@@ -517,13 +666,6 @@ namespace StardewDS
 
             string? secretFriend = SecretFriendCache.Refresh(player, Game1.graphics.GraphicsDevice);
 
-            var buffedSkills = new List<string>();
-            if (player.buffs.FarmingLevel > 0) buffedSkills.Add("farming");
-            if (player.buffs.MiningLevel > 0) buffedSkills.Add("mining");
-            if (player.buffs.ForagingLevel > 0) buffedSkills.Add("foraging");
-            if (player.buffs.FishingLevel > 0) buffedSkills.Add("fishing");
-            if (player.buffs.CombatLevel > 0) buffedSkills.Add("combat");
-
             // The same if/else chain SkillsPage.draw uses to pick the
             // seasonal doodle's source rect (394, 120 + seasonIndex * 23):
             // green rain and being married override everything, then a
@@ -543,72 +685,18 @@ namespace StardewDS
             else if (Game1.IsWinter && Game1.dayOfMonth == 25)
                 doodleIcon = $"doodle-{Game1.seasonIndex}-1";
 
-            return new GameStateSnapshot
+            return new SlowFields
             {
-                PlayerName = player.Name,
-                FarmName = player.farmName.Value,
-                Level = player.Level,
-                Title = player.getTitle(),
-                CurrentFunds = player.Money,
-                TotalEarnings = player.totalMoneyEarned,
-
-                FarmingLevel = player.FarmingLevel,
-                MiningLevel = player.MiningLevel,
-                ForagingLevel = player.ForagingLevel,
-                FishingLevel = player.FishingLevel,
-                CombatLevel = player.CombatLevel,
-                HasVisibleQuests = player.hasVisibleQuests,
-                HasNewQuestActivity = player.hasNewQuestActivity(),
-
-                Health = player.health,
-                MaxHealth = player.maxHealth,
-                Energy = (int)player.Stamina,
-                MaxEnergy = player.MaxStamina,
-                Exhausted = player.exhausted.Value,
-                EnergyShake = Game1.staminaShakeTimer > 0,
-                HealthShake = Game1.hitShakeTimer > 0,
-
-                Weekday = Weekdays[(Game1.dayOfMonth - 1) % 7],
-                Season = Capitalize(Game1.currentSeason),
-                DayOfMonth = Game1.dayOfMonth,
-                Year = Game1.year,
-                Hour24 = Game1.timeOfDay / 100,
-                Minute = Game1.timeOfDay % 100,
-                Weather = weather,
-                SeasonNumber = seasonNumber,
-                WeatherIconCode = Game1.weatherIcon,
-
-                LocationName = locationName,
-                MapMarkerX = markerX,
-                MapMarkerY = markerY,
-
-                BackpackSize = player.MaxItems,
-                SelectedIndex = player.CurrentToolIndex,
-                Inventory = inventory,
-
-                Equipment = new EquipmentDto
-                {
-                    Hat = hat?.DisplayName,
-                    HatId = hat?.QualifiedItemId,
-                    LeftRing = leftRing?.DisplayName,
-                    LeftRingId = leftRing?.QualifiedItemId,
-                    RightRing = rightRing?.DisplayName,
-                    RightRingId = rightRing?.QualifiedItemId,
-                    Boots = boots?.DisplayName,
-                    BootsId = boots?.QualifiedItemId,
-                },
                 Animals = animals,
-
+                Title = player.getTitle(),
                 CommunityCenterUnlocked = ccUnlocked,
                 CommunityCenterAreas = ccAreas,
                 IsJojaMember = isJoja,
                 CommunityCenterComplete = host.hasCompletedCommunityCenter() && !Utility.hasFinishedJojaRoute(),
-                HouseUpgradeLevel = player.HouseUpgradeLevel,
                 HouseLevelLabel = Game1.content.LoadString("Strings\\UI:Inventory_PortraitHover_Level", player.HouseUpgradeLevel + 1),
-                DeepestMineLevel = System.Math.Min(lowestMineLevel, 120),
-                DeepestSkullCavernLevel = System.Math.Max(lowestMineLevel - 120, 0),
+                LowestMineLevel = lowestMineLevel,
                 StardropsFound = Utility.numStardropsFound(player),
-                MasteryUnlocked = masteryExp != 0,
+                MasteryExp = masteryExp,
                 MasteryLevel = masteryLevel,
                 MasteryProgress = masteryProgress,
                 MasteryExpIntoLevel = masteryIntoLevel,
@@ -616,11 +704,49 @@ namespace StardewDS
                 MasteryLabel = masteryLabel,
                 MasteryLabelWidth = Game1.smallFont.MeasureString(masteryLabel).X,
                 SecretFriendName = secretFriend,
-                BuffedSkills = buffedSkills,
-                GoldenWalnuts = Game1.netWorldState.Value.GoldenWalnuts,
-                QiGems = player.QiGems,
                 DoodleIcon = doodleIcon,
             };
+        }
+
+        /// <summary>
+        /// Whether the companion should show its blank idle screen right now.
+        /// Flags checked against the decompiled 1.6 <c>Game1</c>:
+        /// <list type="bullet">
+        ///   <item>Cutscenes: <c>eventUp</c> / a current event — except
+        ///     festivals, which are events too but are normal gameplay — and
+        ///     overnight <c>farmEvent</c>s (fairy, witch, meteorite...).</item>
+        ///   <item>Sleeping: <c>Game1.NewDay</c> sets <c>newDay</c> until the
+        ///     new day's setup finishes; the shipping/level-up/save menus that
+        ///     follow run under <c>showingEndOfNightStuff</c>; and the fade
+        ///     between accepting "go to bed" and <c>NewDay</c> is covered by
+        ///     <c>isInBed</c> while fading.</item>
+        ///   <item>Loading: a save/world loader (<c>currentLoader</c>,
+        ///     <c>loadingMode</c>) and location transitions — a pending
+        ///     <c>locationRequest</c>, <c>isWarping</c>, or any screen fade.</item>
+        /// </list>
+        /// </summary>
+        private static bool IsIdle(Farmer player)
+        {
+            if (Game1.eventUp && !Game1.isFestival())
+                return true;
+            if (Game1.CurrentEvent is { isFestival: false })
+                return true;
+            if (Game1.farmEvent is not null)
+                return true;
+
+            if (Game1.newDay || Game1.showingEndOfNightStuff)
+                return true;
+
+            bool fading = Game1.IsFading() || Game1.globalFade || Game1.fadeToBlack;
+            if (player.isInBed.Value && fading)
+                return true;
+
+            if (Game1.currentLoader is not null || Game1.gameMode == Game1.loadingMode)
+                return true;
+            if (Game1.isWarping || Game1.locationRequest is not null || fading)
+                return true;
+
+            return false;
         }
 
         private static string Capitalize(string s) =>
